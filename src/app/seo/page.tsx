@@ -1,0 +1,18 @@
+import Link from 'next/link';
+import { ARTICLES } from './content';
+
+export const metadata = {
+  title: 'Small Business SEO & AI Search Visibility | Plunder & Riffle',
+  description: 'Practical, evidence-led guides to small-business SEO, website audits, and visibility in AI search—without ranking guarantees or gimmicks.',
+  robots: { index: false, follow: true },
+};
+
+export default function SeoHomePage() {
+  return <main className="min-h-screen bg-background text-foreground">
+    <header className="border-b border-border/70"><nav aria-label="SEO guide navigation" className="mx-auto flex max-w-6xl items-center justify-between px-5 py-5"><Link href="/" className="font-black tracking-tight">P&amp;R <span className="text-primary">FIELD NOTES</span></Link><div className="flex gap-5 text-sm"><Link href="/blog">Blog</Link><Link href="/agent-prompt">Free agent prompt</Link><a href="https://www.plunderandriffle.com/agents">P&amp;R agents</a></div></nav></header>
+    <section className="mx-auto max-w-6xl px-5 py-20 sm:py-28"><p className="text-sm font-bold uppercase tracking-[.2em] text-primary">Small-business search, minus the magic tricks</p><h1 className="mt-5 max-w-4xl text-4xl font-black tracking-tight sm:text-6xl">Make your business easier to find, understand, and trust.</h1><p className="mt-6 max-w-2xl text-lg leading-8 text-muted-foreground">Field-tested SEO explainers, fair tool comparisons, and a free prompt for your own agent. Clear evidence, useful next steps, and no promises of rankings or AI citations.</p><div className="mt-8 flex flex-wrap gap-3"><Link className="rounded-lg bg-primary px-5 py-3 font-bold text-primary-foreground" href="/agent-prompt">Get the free agent prompt</Link><Link className="rounded-lg border border-border px-5 py-3 font-bold" href="/blog">Explore the guides</Link></div><p className="mt-5 text-xs text-muted-foreground">Draft edition — editorial review and domain setup pending.</p></section>
+    <section className="mx-auto max-w-6xl px-5 pb-16"><h2 className="text-2xl font-black sm:text-3xl">Useful answers, not a page for every keyword.</h2><div className="mt-7 grid gap-4 md:grid-cols-2">{ARTICLES.map(a=><article key={a.slug} className="rounded-2xl border border-border/70 bg-card p-6"><p className="text-xs font-bold uppercase tracking-wider text-primary">Comparison · Draft</p><h3 className="mt-3 text-xl font-bold"><Link href={`/blog/${a.slug}`}>{a.title}</Link></h3><p className="mt-3 text-sm leading-6 text-muted-foreground">{a.description}</p><Link className="mt-5 inline-block text-sm font-bold underline" href={`/blog/${a.slug}`}>Read draft →</Link></article>)}</div></section>
+    <section className="mx-auto max-w-6xl px-5 pb-20"><div className="rounded-2xl border border-primary/30 bg-primary/5 p-7 sm:p-10"><p className="text-xs font-bold uppercase tracking-widest text-primary">Put your own agent to work</p><h2 className="mt-3 text-2xl font-black">A copy-ready prompt for evidence-first SEO help.</h2><p className="mt-3 max-w-2xl text-muted-foreground">Have your agent review your site, separate evidence from assumptions, and return a prioritized draft plan—without fake metrics or unapproved publishing.</p><Link className="mt-5 inline-block rounded-lg bg-foreground px-5 py-3 font-bold text-background" href="/agent-prompt">View and copy the prompt</Link></div></section>
+    <footer className="border-t border-border/70"><div className="mx-auto flex max-w-6xl flex-wrap justify-between gap-3 px-5 py-7 text-sm text-muted-foreground"><span>Plunder &amp; Riffle · Field Notes</span><a href="https://www.plunderandriffle.com/agents">Meet the P&amp;R agent team</a><span>We don’t guarantee rankings or citations.</span></div></footer>
+  </main>;
+}

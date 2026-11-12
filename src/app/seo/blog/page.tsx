@@ -1,0 +1,8 @@
+import Link from 'next/link';
+import { ARTICLES } from '../content';
+
+export const metadata = { title: 'SEO & AI Search Guides | P&R Field Notes', description: 'Evidence-led small-business SEO guides and honest comparisons of tools, agencies, and workflows.', robots: { index: false, follow: true } };
+
+export default function BlogPage() {
+ return <main className="mx-auto min-h-screen max-w-5xl px-5 py-14"><Link href="/" className="text-sm underline">← P&amp;R Field Notes</Link><header className="mt-10"><p className="text-xs font-bold uppercase tracking-widest text-primary">Blog · Draft</p><h1 className="mt-3 text-4xl font-black">Small-business SEO, explained clearly.</h1><p className="mt-4 max-w-2xl leading-7 text-muted-foreground">Practical guides and fair comparisons built around real business questions. Drafts are being reviewed; product details must be rechecked before publication.</p></header><div className="mt-9 grid gap-4 md:grid-cols-2">{ARTICLES.map(a=><article key={a.slug} className="rounded-2xl border border-border/70 bg-card p-6"><p className="text-xs text-muted-foreground">Comparison · {a.updated} · Draft</p><h2 className="mt-2 text-xl font-bold"><Link href={`/blog/${a.slug}`}>{a.title}</Link></h2><p className="mt-3 text-sm leading-6 text-muted-foreground">{a.description}</p><Link className="mt-5 inline-block text-sm font-bold underline" href={`/blog/${a.slug}`}>Read draft →</Link></article>)}</div><p className="mt-10 text-sm text-muted-foreground">Want a checklist for your own site? <Link href="/agent-prompt" className="underline">Copy the free agent prompt.</Link></p></main>;
+}
