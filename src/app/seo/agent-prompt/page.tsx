@@ -1,3 +1,5 @@
+'use client';
+
 import Link from 'next/link';
 import { AGENT_PROMPT } from '../content';
 
