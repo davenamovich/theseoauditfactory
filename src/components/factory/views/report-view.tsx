@@ -17,7 +17,6 @@ import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import { ScoreRing, scoreColor } from '../score-ring';
 import { PnRBanner } from '../pnr-banner';
-import { BeforeCard } from '../before-card';
 import { ContentStudio } from './studio-view';
 import type { AuditReport, Finding, SavingsOpportunity, Severity } from '@/lib/seo/types';
 import type { Route } from '../router';
@@ -142,6 +141,29 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
     }
   };
 
+  const createFunnelAndNavigate = async (host: string, shareId: string) => {
+    try {
+      const res = await fetch('/api/content/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          auditId: shareId,
+          assetType: 'stick-figure-video',
+          topic: 'Marketing funnel from SEO audit'
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: 'Funnel creation failed', description: data.error ?? 'Please try again.' });
+        return;
+      }
+      // Navigate to the SEO page after funnel creation
+      navigate(`/seo-page/${shareId}`);
+    } catch {
+      toast({ title: 'Network error', description: 'Could not create funnel. Try again.' });
+    }
+  };
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
       {/* Header */}
@@ -164,30 +186,6 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
         </div>
       </div>
 
-      {/* Limited audit banner (site blocked our crawler - honest partial report) */}
-      {report.mode === 'limited' && (
-        <Card className="mt-6 border-amber-500/40 bg-amber-500/5 print-card">
-          <CardContent className="p-5 sm:p-6">
-            <div className="flex items-start gap-3">
-              <ShieldAlert className="h-5 w-5 text-amber-400 shrink-0 mt-0.5" />
-              <div>
-                <div className="font-black tracking-tight">LIMITED AUDIT - THE SITE BLOCKED OUR CRAWLER</div>
-                <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
-                  {report.limitedReason} We never fake results, so everything below covers only what was still
-                  verifiable: robots.txt, sitemap, response headers and redirects. Categories marked
-                  <span className="font-mono font-bold text-foreground"> N/A </span>
-                  could not be measured.
-                </p>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Fix the block (allowlist our crawler, user-agent <span className="font-mono">SeoAuditFactoryBot</span>,
-                  or exempt known AI crawlers in your CDN) and re-run - the full report unlocks automatically.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Scores */}
       <Card className="mt-7 border-primary/25 bg-card/80 card-sheen print-card">
         <CardContent className="p-6 sm:p-8">
@@ -197,27 +195,16 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
               <div className="mt-2 text-sm font-bold">Grade {report.grade}</div>
             </div>
             <div className="flex-1 w-full grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-              {([
-                { label: 'Technical', key: 'technical', score: report.scores.technical },
-                { label: 'Content', key: 'content', score: report.scores.content },
-                { label: 'AI Search', key: 'ai', score: report.scores.ai },
-                { label: 'Local', key: 'local', score: report.scores.local },
-                { label: 'Performance', key: 'performance', score: report.scores.performance },
-              ] as Array<{ label: string; key: string; score: number }>).map(({ label, key, score }) => (
-                <div key={key} className="text-center rounded-xl border border-border/60 bg-background/40 py-4">
-                  {report.unmeasured?.includes(key as never) ? (
-                    <>
-                      <div className="h-[74px] flex items-center justify-center">
-                        <span className="font-mono text-xl font-black text-muted-foreground" aria-label="Not measured">N/A</span>
-                      </div>
-                      <div className="mt-1.5 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</div>
-                    </>
-                  ) : (
-                    <>
-                      <ScoreRing value={score} size={74} stroke={7} animated />
-                      <div className="mt-1.5 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</div>
-                    </>
-                  )}
+              {[
+                ['Technical', report.scores.technical],
+                ['Content', report.scores.content],
+                ['AI Search', report.scores.ai],
+                ['Local', report.scores.local],
+                ['Performance', report.scores.performance],
+              ].map(([label, score]) => (
+                <div key={label as string} className="text-center rounded-xl border border-border/60 bg-background/40 py-4">
+                  <ScoreRing value={score as number} size={74} stroke={7} animated />
+                  <div className="mt-1.5 text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</div>
                 </div>
               ))}
             </div>
@@ -338,15 +325,11 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
           <PiggyBank className="h-5 w-5 text-secondary" /> THE FIVE WAYS YOU ARE LOSING MONEY
         </h2>
         <p className="mt-2 text-sm text-muted-foreground">Problems translated into business economics. Every number is an illustrative scenario with stated assumptions - we cannot see your invoices and we never pretend otherwise.</p>
-        {report.savings.length > 0 ? (
-          <div className="mt-4 space-y-3">
-            {report.savings.map((s) => (
-              <SavingsCard key={s.id} savings={s} />
-            ))}
-          </div>
-        ) : (
-          <p className="mt-4 text-sm text-muted-foreground">Savings scenarios need page content to analyze - they unlock once the site lets our crawler read the page (see the limited-audit banner above).</p>
-        )}
+        <div className="mt-4 space-y-3">
+          {report.savings.map((s) => (
+            <SavingsCard key={s.id} savings={s} />
+          ))}
+        </div>
       </section>
 
       {/* Calculator */}
@@ -381,7 +364,7 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
                 <span className="flex items-center gap-3">
                   <span className={`font-mono font-black text-lg ${scoreColor(cat.score)}`}>{cat.score}</span>
                   <span className="font-semibold">{cat.label}</span>
-                  <span className="text-xs text-muted-foreground">{cat.checks.filter((c) => c.status !== 'na').length} checks · {cat.checks.filter((c) => c.status === 'na').length} not measurable</span>
+                  <span className="text-xs text-muted-foreground">{cat.checks.filter((c) => c.status !== 'na').length} checks</span>
                 </span>
               </AccordionTrigger>
               <AccordionContent>
@@ -430,10 +413,8 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
         </div>
       </section>
 
-      {/* The free /BEFORE - meme journey hook (real P&R MCP generation) */}
-      <BeforeCard auditId={meta.shareId} navigate={navigate} />
-
-      {/* Content ideas + studio */}
+      {/* Content ideas + studio */
+      {/* One-click funnel creator */}
       <section className="mt-12 rounded-2xl border border-primary/25 bg-card/70 p-6 sm:p-8 print-card">
         <h2 className="text-xl font-black tracking-tight text-center sm:text-left">
           YOUR WEBSITE HAS CONTENT. <span className="text-primary">LET&apos;S TURN IT INTO ATTENTION.</span>
@@ -446,12 +427,24 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
             </li>
           ))}
         </ul>
-        {report.contentIdeas.length === 0 && (
-          <p className="mt-4 text-sm text-muted-foreground">Ideas are built from your actual pages - they appear once the site lets our crawler read the content.</p>
-        )}
         <div className="mt-6 print-hidden">
           <ContentStudio auditId={meta.shareId} compact />
         </div>
+      </section>
+
+      {/* One-click funnel creator */
+      <section className="mt-8 rounded-xl border border-primary/25 bg-card/80 p-5 sm:p-6 print-card">
+        <h2 className="font-black tracking-tight">CREATE FREE MARKETING FUNNEL</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Generate a stick-figure marketing video funnel from your audit and send visitors
+          directly to your SEO page.
+        </p>
+        <Button
+          onClick={() => createFunnelAndNavigate(meta.host, meta.shareId)}
+          className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90 font-bold w-full"
+        >
+          CREATE FUNNEL & SEND TO SEO PAGE
+        </Button>
       </section>
 
       {/* Pages sampled */}
