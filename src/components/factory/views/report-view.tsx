@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertTriangle, ArrowRight, BadgeCheck, BookOpen, Bot, Calculator, Check, ChevronRight,
+  AlertTriangle, ArrowRight, ArrowDownRight, ArrowUpRight, BadgeCheck, BookOpen, Bot, Calculator, Check, ChevronRight,
   Clock, Copy, Download, ExternalLink, Flame, Gauge, Lightbulb, Loader2, Mail, MapPin,
   Minus, PiggyBank, Printer, RefreshCw, Share2, ShieldAlert, Wrench, X,
 } from 'lucide-react';
@@ -37,20 +37,53 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
   const [meta, setMeta] = useState<{ host: string; businessName?: string | null; shareId: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{ host?: string; reason: string } | null>(null);
+  const [rerunning, setRerunning] = useState(false);
   const { toast } = useToast();
+
+  const rerun = async () => {
+    if (rerunning) return;
+    setRerunning(true);
+    try {
+      const res = await fetch('/api/audit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: report?.url ?? meta?.host, force: true, businessName: meta?.businessName ?? undefined }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast({ title: 'Could not re-run the audit', description: data.error ?? 'Please try again.' });
+        return;
+      }
+      navigate(`/audit/${data.id}`);
+    } catch {
+      toast({ title: 'Network error', description: 'Could not re-run the audit. Try again.' });
+    } finally {
+      setRerunning(false);
+    }
+  };
 
   useEffect(() => {
     fetch(`/api/audit/${id}`, { cache: 'no-store' })
       .then(async (r) => {
         if (r.status === 404) throw new Error('Report not found');
         const data = await r.json();
-        if (data.status !== 'completed' || !data.report) throw new Error('This audit is not finished yet.');
+        if (data.status === 'failed') {
+          // Surface the honest failure reason instead of a generic message.
+          setFailure({ host: data.host, reason: data.error || 'The audit could not be completed.' });
+          return;
+        }
+        if (data.status !== 'completed' || !data.report) {
+          // Still running: send the visitor to the live progress view.
+          navigate(`/audit/${data.id}`);
+          return;
+        }
         setReport(data.report as AuditReport);
         setMeta({ host: data.host, businessName: data.businessName, shareId: data.shareId });
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load report'))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, navigate]);
 
   const shareLink = useMemo(() => (typeof window !== 'undefined' && meta ? `${window.location.origin}/#/report/${meta.shareId}` : ''), [meta]);
 
@@ -62,6 +95,32 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
     );
   }
   if (error || !report || !meta) {
+    if (failure) {
+      const botBlocked = /refused our audit bot|403|rate-limited|429/i.test(failure.reason);
+      return (
+        <div className="max-w-xl mx-auto px-4 py-20 text-center">
+          <AlertTriangle className="h-10 w-10 text-secondary mx-auto" />
+          <h1 className="mt-4 text-2xl font-black tracking-tight">
+            WE COULD NOT AUDIT {failure.host ? failure.host.toUpperCase() : 'THIS SITE'}
+          </h1>
+          <p className="mt-4 text-sm text-muted-foreground leading-relaxed">{failure.reason}</p>
+          {botBlocked && (
+            <p className="mt-3 text-xs text-muted-foreground leading-relaxed">
+              We do not fabricate scores when a site blocks us. If you own this site, allowlist our user
+              agent (SeoAuditFactoryBot) in your firewall or CDN bot rules, then run the audit again.
+            </p>
+          )}
+          <div className="mt-7 flex flex-col sm:flex-row gap-2.5 justify-center">
+            <Button className="bg-primary text-primary-foreground hover:bg-primary/90 font-black" onClick={() => navigate('/')}>
+              TRY ANOTHER SITE
+            </Button>
+            <Button variant="outline" className="border-border/60" onClick={() => navigate('/learn/how-to-audit-a-website')}>
+              WHY SITES BLOCK AUDITS
+            </Button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="max-w-xl mx-auto px-4 py-24 text-center">
         <AlertTriangle className="h-8 w-8 text-secondary mx-auto" />
@@ -98,7 +157,9 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
         <div className="flex flex-wrap gap-2 print-hidden">
           <Button variant="outline" size="sm" onClick={copyShare} className="border-border"><Share2 className="h-4 w-4 mr-1.5" /> SHARE</Button>
           <Button variant="outline" size="sm" onClick={() => window.print()} className="border-border"><Printer className="h-4 w-4 mr-1.5" /> PDF</Button>
-          <Button variant="outline" size="sm" onClick={() => navigate('/')} className="border-primary/40 text-primary hover:bg-primary/10"><RefreshCw className="h-4 w-4 mr-1.5" /> RE-RUN</Button>
+          <Button variant="outline" size="sm" onClick={rerun} disabled={rerunning} className="border-primary/40 text-primary hover:bg-primary/10">
+            {rerunning ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1.5" />} RE-RUN
+          </Button>
         </div>
       </div>
 
@@ -135,6 +196,72 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
           </div>
         </CardContent>
       </Card>
+
+      {/* Progress vs previous audit (only when a prior completed audit exists) */}
+      {report.comparison && (
+        <Card className="mt-5 border-border/70 bg-card/60 print-card">
+          <CardContent className="p-5 sm:p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                {report.comparison.deltas.overall >= 0 ? (
+                  <ArrowUpRight className="h-5 w-5 text-primary" />
+                ) : (
+                  <ArrowDownRight className="h-5 w-5 text-red-400" />
+                )}
+                <div>
+                  <div className="font-black tracking-tight">PROGRESS SINCE YOUR LAST AUDIT</div>
+                  <div className="text-xs text-muted-foreground">
+                    Compared with the completed audit from {new Date(report.comparison.previousRunAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}. Both runs are real crawls.
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground">was {report.comparison.previousOverall}</span>
+                <span className="font-mono text-lg font-black text-primary">{report.scores.overall}</span>
+                <Badge variant="outline" className={report.comparison.deltas.overall >= 0 ? 'border-primary/40 text-primary' : 'border-red-500/40 text-red-400'}>
+                  {report.comparison.deltas.overall >= 0 ? '+' : ''}{report.comparison.deltas.overall} overall
+                </Badge>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-2 sm:grid-cols-5 gap-2">
+              {([
+                ['Technical', report.comparison.deltas.technical],
+                ['Content', report.comparison.deltas.content],
+                ['AI Search', report.comparison.deltas.ai],
+                ['Local', report.comparison.deltas.local],
+                ['Performance', report.comparison.deltas.performance],
+              ] as Array<[string, number]>).map(([label, d]) => (
+                <div key={label} className="rounded-lg border border-border/60 bg-background/40 px-3 py-2 flex items-center justify-between">
+                  <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">{label}</span>
+                  <span className={`font-mono text-sm font-bold ${d > 0 ? 'text-primary' : d < 0 ? 'text-red-400' : 'text-muted-foreground'}`}>
+                    {d > 0 ? '+' : ''}{d}
+                  </span>
+                </div>
+              ))}
+            </div>
+            {(report.comparison.fixedFindings.length > 0 || report.comparison.newFindings.length > 0) && (
+              <div className="mt-4 grid sm:grid-cols-2 gap-3 text-xs">
+                {report.comparison.fixedFindings.length > 0 && (
+                  <div className="rounded-lg border border-primary/25 bg-primary/5 px-3.5 py-3">
+                    <div className="font-bold text-primary flex items-center gap-1.5"><BadgeCheck className="h-3.5 w-3.5" /> RESOLVED SINCE LAST RUN</div>
+                    <ul className="mt-1.5 space-y-1 text-muted-foreground">
+                      {report.comparison.fixedFindings.slice(0, 5).map((code) => <li key={code} className="font-mono">{code}</li>)}
+                    </ul>
+                  </div>
+                )}
+                {report.comparison.newFindings.length > 0 && (
+                  <div className="rounded-lg border border-amber-500/25 bg-amber-500/5 px-3.5 py-3">
+                    <div className="font-bold text-amber-400 flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5" /> NEW THIS RUN</div>
+                    <ul className="mt-1.5 space-y-1 text-muted-foreground">
+                      {report.comparison.newFindings.slice(0, 5).map((code) => <li key={code} className="font-mono">{code}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Savings estimate band */}
       {report.savings.length === 5 && (

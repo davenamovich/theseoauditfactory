@@ -321,6 +321,9 @@ async function runAudit(auditId: string): Promise<void> {
       businessName: audit.businessName ?? undefined,
       industry: audit.industry ?? undefined,
       location: audit.location ?? undefined,
+      homeTitle: homepage.title || undefined,
+      homeDescription: homepage.metaDescription || undefined,
+      homeH1: homepage.h1s[0] || undefined,
       scores: {
         overall,
         technical: categories.find((c) => c.key === 'technical')?.score ?? 0,
@@ -369,6 +372,37 @@ async function runAudit(auditId: string): Promise<void> {
       redirectChain: home.redirectChain,
       notes,
     };
+
+    // Progress comparison vs the previous completed audit of the same host
+    // (used by the "Fix, re-run, compare" loop). Only real stored results are
+    // compared - never estimated ones.
+    try {
+      const previous = await db.audit.findFirst({
+        where: { host, status: 'completed', id: { not: auditId }, report: { not: null } },
+        orderBy: { completedAt: 'desc' },
+      });
+      const prevReport = previous?.report as AuditReport | null;
+      if (previous?.completedAt && prevReport?.scores) {
+        const prevCodes = new Set((prevReport.findings ?? []).map((f) => f.code));
+        const currentCodes = new Set(findings.map((f) => f.code));
+        report.comparison = {
+          previousRunAt: previous.completedAt.toISOString(),
+          previousOverall: prevReport.scores.overall,
+          deltas: {
+            overall: overall - prevReport.scores.overall,
+            technical: report.scores.technical - prevReport.scores.technical,
+            content: report.scores.content - prevReport.scores.content,
+            ai: report.scores.ai - prevReport.scores.ai,
+            local: report.scores.local - prevReport.scores.local,
+            performance: report.scores.performance - prevReport.scores.performance,
+          },
+          fixedFindings: [...prevCodes].filter((c) => !currentCodes.has(c)).slice(0, 12),
+          newFindings: [...currentCodes].filter((c) => !prevCodes.has(c)).slice(0, 12),
+        };
+      }
+    } catch {
+      /* comparison is best-effort */
+    }
 
     await db.audit.update({
       where: { id: auditId },

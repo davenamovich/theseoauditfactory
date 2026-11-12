@@ -43,7 +43,10 @@ export async function POST(req: NextRequest) {
     }
 
     // Cache: a recently completed audit for the same host within the TTL window is reused.
-    const ttlMs = settings.cacheTtlMinutes * 60_000;
+    // force=true (RE-RUN button) skips the cache so progress can be re-measured;
+    // the per-IP daily limit still applies.
+    const force = Boolean(body.force);
+    const ttlMs = force ? 0 : settings.cacheTtlMinutes * 60_000;
     if (ttlMs > 0) {
       const cached = await db.audit.findFirst({
         where: { host, status: 'completed', completedAt: { gte: new Date(Date.now() - ttlMs) } },

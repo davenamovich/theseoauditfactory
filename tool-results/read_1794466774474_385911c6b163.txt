@@ -1,0 +1,1144 @@
+     1→// Specialist analyzers — methodology adapted from the MIT-licensed claude-seo project.
+     2→// Each analyzer returns category checks + human findings with real evidence.
+     3→import type {
+     4→  AiCrawlerPolicy,
+     5→  CategoryScore,
+     6→  CheckResult,
+     7→  Finding,
+     8→  PageSummary,
+     9→} from './types';
+    10→import type { ParsedPage, LinkInfo } from './parse';
+    11→import { safeHost } from './parse';
+    12→
+    13→export interface RobotsInfo {
+    14→  found: boolean;
+    15→  text: string;
+    16→  sitemaps: string[];
+    17→  aiCrawlers: AiCrawlerPolicy[];
+    18→}
+    19→
+    20→export interface SitemapInfo {
+    21→  found: boolean;
+    22→  urlCount: number | null;
+    23→  isIndex: boolean;
+    24→}
+    25→
+    26→export interface SampledPage {
+    27→  url: string;
+    28→  status: number | null;
+    29→  ok: boolean;
+    30→  words: number;
+    31→  title: string;
+    32→  parsed: ParsedPage | null;
+    33→}
+    34→
+    35→export interface LinkCheck {
+    36→  url: string;
+    37→  status: number | null;
+    38→  ok: boolean;
+    39→  internal: boolean;
+    40→}
+    41→
+    42→export interface AnalyzeContext {
+    43→  url: string;
+    44→  finalUrl: string;
+    45→  host: string;
+    46→  status: number | null;
+    47→  headers: Record<string, string>;
+    48→  ttfbMs: number | null;
+    49→  htmlBytes: number;
+    50→  redirectChain: string[];
+    51→  homepage: ParsedPage;
+    52→  robots: RobotsInfo;
+    53→  sitemap: SitemapInfo;
+    54→  llms: { found: boolean; bytes: number };
+    55→  pages: SampledPage[];
+    56→  linkChecks: LinkCheck[];
+    57→  businessName?: string;
+    58→  industry?: string;
+    59→  location?: string;
+    60→}
+    61→
+    62→interface AnalyzerOutput {
+    63→  key: 'technical' | 'content' | 'ai' | 'local' | 'performance';
+    64→  label: string;
+    65→  checks: CheckResult[];
+    66→  findings: Finding[];
+    67→}
+    68→
+    69→const AI_CRAWLERS = [
+    70→  'GPTBot',
+    71→  'OAI-SearchBot',
+    72→  'ChatGPT-User',
+    73→  'ClaudeBot',
+    74→  'Claude-Web',
+    75→  'anthropic-ai',
+    76→  'PerplexityBot',
+    77→  'Perplexity-User',
+    78→  'Google-Extended',
+    79→  'CCBot',
+    80→  'Applebot-Extended',
+    81→  'Bytespider',
+    82→];
+    83→
+    84→export function parseRobots(text: string): RobotsInfo {
+    85→  const sitemaps: string[] = [];
+    86→  const lines = text.split(/\r?\n/).map((l) => l.trim());
+    87→  for (const line of lines) {
+    88→    const m = line.match(/^sitemap:\s*(\S+)/i);
+    89→    if (m) sitemaps.push(m[1]);
+    90→  }
+    91→
+    92→  // Build user-agent groups per RFC 9309: rules belong to the nearest
+    93→  // preceding user-agent line(s); consecutive UA lines share one group.
+    94→  interface Group {
+    95→    agents: string[];
+    96→    disallows: string[];
+    97→    allows: string[];
+    98→  }
+    99→  const groups: Group[] = [];
+   100→  let current: Group | null = null;
+   101→  for (const line of lines) {
+   102→    if (!line || line.startsWith('#')) continue;
+   103→    const ua = line.match(/^user-agent:\s*(.*)$/i);
+   104→    if (ua) {
+   105→      const agent = ua[1].trim().toLowerCase();
+   106→      if (current && current.disallows.length === 0 && current.allows.length === 0) {
+   107→        current.agents.push(agent); // consecutive UA lines share a group
+   108→      } else {
+   109→        current = { agents: [agent], disallows: [], allows: [] };
+   110→        groups.push(current);
+   111→      }
+   112→      continue;
+   113→    }
+   114→    const dis = line.match(/^disallow:\s*(.*)$/i);
+   115→    if (dis && current) {
+   116→      current.disallows.push(dis[1].trim());
+   117→      continue;
+   118→    }
+   119→    const allow = line.match(/^allow:\s*(.*)$/i);
+   120→    if (allow && current) current.allows.push(allow[1].trim());
+   121→  }
+   122→
+   123→  const aiCrawlers: AiCrawlerPolicy[] = AI_CRAWLERS.map((name) => {
+   124→    const lower = name.toLowerCase();
+   125→    const group = groups.find((g) => g.agents.includes(lower));
+   126→    if (!group) return { name, policy: 'not-mentioned' as const };
+   127→    const blockedAll = group.disallows.some((d) => d === '/');
+   128→    const hasSpecificRules = group.disallows.length > 0 || group.allows.length > 0;
+   129→    if (blockedAll) return { name, policy: 'blocked' as const, detail: 'Disallow: / in robots.txt' };
+   130→    if (hasSpecificRules) return { name, policy: 'allowed' as const, detail: 'Has specific rules (partial access)' };
+   131→    return { name, policy: 'not-mentioned' as const };
+   132→  });
+   133→  return { found: true, text, sitemaps, aiCrawlers };
+   134→}
+   135→
+   136→function finding(
+   137→  code: string,
+   138→  category: Finding['category'],
+   139→  severity: Finding['severity'],
+   140→  title: string,
+   141→  evidence: string[],
+   142→  explanation: string,
+   143→  action: string,
+   144→  impact: string,
+   145→  effort: Finding['effort']
+   146→): Finding {
+   147→  return { code, category, severity, title, evidence, explanation, action, impact, effort };
+   148→}
+   149→
+   150→// ---------------------------------------------------------------------------
+   151→// 1. Technical SEO Auditor
+   152→// ---------------------------------------------------------------------------
+   153→export function analyzeTechnical(ctx: AnalyzeContext): AnalyzerOutput {
+   154→  const checks: CheckResult[] = [];
+   155→  const findings: Finding[] = [];
+   156→  const p = ctx.homepage;
+   157→
+   158→  const https = ctx.finalUrl.startsWith('https://');
+   159→  checks.push({
+   160→    id: 'https',
+   161→    label: 'HTTPS secure connection',
+   162→    status: https ? 'pass' : 'fail',
+   163→    detail: https ? 'Site served over HTTPS' : 'Site served over plain HTTP',
+   164→  });
+   165→  if (!https)
+   166→    findings.push(
+   167→      finding(
+   168→        'no-https',
+   169→        'technical',
+   170→        'critical',
+   171→        'Website is not served over HTTPS',
+   172→        [`Final URL after redirects: ${ctx.finalUrl}`],
+   173→        'Browsers label HTTP sites "Not secure," and Google uses HTTPS as a ranking signal. Many customers will not fill in a form on an unsecured page.',
+   174→        'Install a TLS certificate (free with Let\u2019s Encrypt on most hosts) and redirect all HTTP traffic to HTTPS.',
+   175→        'Trust, conversions, and rankings',
+   176→        'quick'
+   177→      )
+   178→    );
+   179→
+   180→  const hops = ctx.redirectChain.length;
+   181→  checks.push({
+   182→    id: 'redirect-chain',
+   183→    label: 'Redirect chain',
+   184→    status: hops === 0 ? 'pass' : hops <= 2 ? 'pass' : hops <= 3 ? 'warn' : 'fail',
+   185→    detail: hops === 0 ? 'Loads directly, no redirects' : `${hops} redirect hop(s) before the final page`,
+   186→  });
+   187→  if (hops >= 3)
+   188→    findings.push(
+   189→      finding(
+   190→        'redirect-chain',
+   191→        'technical',
+   192→        'medium',
+   193→        `Long redirect chain (${hops} hops)`,
+   194→        [...ctx.redirectChain, ctx.finalUrl],
+   195→        'Every extra redirect adds delay for visitors and wastes crawl budget for search engines.',
+   196→        'Point links and redirects at the final URL directly so a single hop gets there.',
+   197→        'Speed and crawl efficiency',
+   198→        'quick'
+   199→      )
+   200→    );
+   201→
+   202→  checks.push({
+   203→    id: 'robots-txt',
+   204→    label: 'robots.txt present',
+   205→    status: ctx.robots.found ? 'pass' : 'warn',
+   206→    detail: ctx.robots.found ? 'Found at /robots.txt' : 'No robots.txt found (servers usually default to allow-all)',
+   207→  });
+   208→  if (!ctx.robots.found)
+   209→    findings.push(
+   210→      finding(
+   211→        'no-robots',
+   212→        'technical',
+   213→        'low',
+   214→        'No robots.txt file',
+   215→        ['Request to /robots.txt returned no valid file'],
+   216→        'robots.txt tells search engines (and AI crawlers) what to crawl. Its absence is usually safe but removes your control.',
+   217→        'Add a simple robots.txt that references your sitemap. See the Technical SEO Checklist in our resource center.',
+   218→        'Crawl control',
+   219→        'quick'
+   220→      )
+   221→    );
+   222→
+   223→  checks.push({
+   224→    id: 'robots-sitemap',
+   225→    label: 'Sitemap declared in robots.txt',
+   226→    status: ctx.robots.sitemaps.length > 0 ? 'pass' : 'warn',
+   227→    detail: ctx.robots.sitemaps.length ? ctx.robots.sitemaps.slice(0, 2).join(', ') : 'No Sitemap: line in robots.txt',
+   228→  });
+   229→
+   230→  checks.push({
+   231→    id: 'xml-sitemap',
+   232→    label: 'XML sitemap exists',
+   233→    status: ctx.sitemap.found && (ctx.sitemap.urlCount ?? 0) > 0 ? 'pass' : ctx.sitemap.found ? 'pass' : 'fail',
+   234→    detail:
+   235→      ctx.sitemap.found && ctx.sitemap.urlCount
+   236→        ? `${ctx.sitemap.urlCount} URLs listed`
+   237→        : ctx.sitemap.found
+   238→          ? ctx.sitemap.isIndex
+   239→            ? 'Sitemap index found (references child sitemaps)'
+   240→            : 'Sitemap found'
+   241→          : 'No sitemap found at common locations or in robots.txt',
+   242→  });
+   243→  if (!ctx.sitemap.found || (ctx.sitemap.urlCount ?? 0) === 0)
+   244→    findings.push(
+   245→      finding(
+   246→        'no-sitemap',
+   247→        'technical',
+   248→        'high',
+   249→        'XML sitemap missing or empty',
+   250→        ['No valid sitemap.xml found at /sitemap.xml or declared in robots.txt'],
+   251→        'A sitemap is how you hand Google a complete list of your pages. Without one, new and important pages can be discovered late or never.',
+   252→        'Generate a sitemap (most CMSs and plugins do this with one toggle) and reference it in robots.txt and Search Console.',
+   253→        'Faster, more complete indexing',
+   254→        'quick'
+   255→      )
+   256→    );
+   257→
+   258→  const noindex = /noindex/i.test(p.metaRobots);
+   259→  checks.push({
+   260→    id: 'indexable',
+   261→    label: 'Homepage indexable',
+   262→    status: noindex ? 'fail' : 'pass',
+   263→    detail: noindex ? 'meta robots contains noindex' : 'No noindex directive found',
+   264→  });
+   265→  if (noindex)
+   266→    findings.push(
+   267→      finding(
+   268→        'noindex',
+   269→        'technical',
+   270→        'critical',
+   271→        'Homepage is marked noindex',
+   272→        [`<meta name="robots" content="${p.metaRobots}">`],
+   273→        'A noindex tag asks Google to keep this page out of search results entirely. On a homepage this is usually a staging setting that leaked to production.',
+   274→        'Remove noindex from the homepage meta robots tag and request indexing in Google Search Console.',
+   275→        'Entire search visibility',
+   276→        'quick'
+   277→      )
+   278→    );
+   279→
+   280→  checks.push({
+   281→    id: 'canonical',
+   282→    label: 'Canonical tag',
+   283→    status: p.canonical ? 'pass' : 'warn',
+   284→    detail: p.canonical ? p.canonical : 'No rel=canonical on homepage',
+   285→  });
+   286→  if (!p.canonical)
+   287→    findings.push(
+   288→      finding(
+   289→        'no-canonical',
+   290→        'technical',
+   291→        'low',
+   292→        'No canonical tag on the homepage',
+   293→        ['No <link rel="canonical"> found'],
+   294→        'Canonical tags prevent duplicate-URL confusion (e.g., http/https, with/without trailing slash). Most templates include one; yours does not.',
+   295→        'Add a self-referencing canonical link tag to the homepage template.',
+   296→        'Duplicate-content hygiene',
+   297→        'quick'
+   298→      )
+   299→    );
+   300→
+   301→  checks.push({
+   302→    id: 'viewport',
+   303→    label: 'Mobile viewport tag',
+   304→    status: p.viewport ? 'pass' : 'fail',
+   305→    detail: p.viewport ?? 'No <meta name="viewport"> found',
+   306→  });
+   307→  if (!p.viewport)
+   308→    findings.push(
+   309→      finding(
+   310→        'no-viewport',
+   311→        'technical',
+   312→        'high',
+   313→        'Page is not mobile-ready (no viewport tag)',
+   314→        ['Missing <meta name="viewport"> tag'],
+   315→        'Without a viewport tag, mobile browsers render the desktop layout zoomed out. Google indexes mobile-first, so this hurts every ranking.',
+   316→        'Add <meta name="viewport" content="width=device-width, initial-scale=1"> to the page template.',
+   317→        'All mobile rankings',
+   318→        'quick'
+   319→      )
+   320→    );
+   321→
+   322→  const securityHeaders = ['strict-transport-security', 'x-content-type-options', 'x-frame-options', 'content-security-policy'].filter(
+   323→    (h) => ctx.headers[h]
+   324→  );
+   325→  checks.push({
+   326→    id: 'security-headers',
+   327→    label: 'Security headers',
+   328→    status: securityHeaders.length >= 3 ? 'pass' : securityHeaders.length >= 1 ? 'warn' : 'warn',
+   329→    detail:
+   330→      securityHeaders.length > 0
+   331→        ? `Found: ${securityHeaders.join(', ')}`
+   332→        : 'No HSTS, X-Content-Type-Options, X-Frame-Options or CSP headers found',
+   333→  });
+   334→
+   335→  const brokenInternal = ctx.linkChecks.filter((l) => l.internal && !l.ok);
+   336→  const brokenExternal = ctx.linkChecks.filter((l) => !l.internal && !l.ok);
+   337→  const sampledCount = ctx.linkChecks.length;
+   338→  const brokenStatus: CheckResult['status'] =
+   339→    brokenInternal.length === 0 ? 'pass' : brokenInternal.length <= 2 ? 'warn' : 'fail';
+   340→  checks.push({
+   341→    id: 'broken-links',
+   342→    label: `Broken links (sample of ${sampledCount})`,
+   343→    status: sampledCount < 4 ? 'na' : brokenStatus,
+   344→    detail:
+   345→      sampledCount < 4
+   346→        ? 'Not enough links found to test'
+   347→        : `${brokenInternal.length} internal and ${brokenExternal.length} external broken of ${sampledCount} tested`,
+   348→  });
+   349→  if (sampledCount >= 4 && brokenInternal.length > 0)
+   350→    findings.push(
+   351→      finding(
+   352→        'broken-links',
+   353→        'technical',
+   354→        brokenInternal.length > 2 ? 'high' : 'medium',
+   355→        `${brokenInternal.length} broken internal link(s) found`,
+   356→        brokenInternal.slice(0, 5).map((l) => `${l.url} returned ${l.status ?? 'an error'}`),
+   357→        'Dead links frustrate customers and waste crawl budget. They also signal neglect to search engines.',
+   358→        'Fix or remove the broken links listed in the evidence.',
+   359→        'User trust and crawl efficiency',
+   360→        'quick'
+   361→      )
+   362→    );
+   363→
+   364→  const encoding = ctx.headers['content-encoding'] ?? null;
+   365→  checks.push({
+   366→    id: 'compression',
+   367→    label: 'Text compression (gzip/brotli)',
+   368→    status: encoding ? 'pass' : 'warn',
+   369→    detail: encoding ? `Served with ${encoding}` : 'No Content-Encoding header on HTML response',
+   370→  });
+   371→  if (!encoding)
+   372→    findings.push(
+   373→      finding(
+   374→        'no-compression',
+   375→        'technical',
+   376→        'medium',
+   377→        'HTML served without compression',
+   378→        ['No Content-Encoding header on the homepage response'],
+   379→        'Uncompressed HTML can be 3-5x larger than it needs to be, slowing every visit.',
+   380→        'Enable gzip or brotli compression in your server or CDN config.',
+   381→        'Load time on every page',
+   382→        'quick'
+   383→      )
+   384→    );
+   385→
+   386→  checks.push({ id: 'favicon', label: 'Favicon', status: p.favicon ? 'pass' : 'warn', detail: p.favicon ? 'Icon link found' : 'No favicon link found' });
+   387→  checks.push({
+   388→    id: 'lang',
+   389→    label: 'Language declared',
+   390→    status: p.lang ? 'pass' : 'warn',
+   391→    detail: p.lang ? `html lang="${p.lang}"` : 'No lang attribute on <html>',
+   392→  });
+   393→
+   394→  return { key: 'technical', label: 'Technical SEO', checks, findings };
+   395→}
+   396→
+   397→// ---------------------------------------------------------------------------
+   398→// 2. Content Strategist
+   399→// ---------------------------------------------------------------------------
+   400→export function analyzeContent(ctx: AnalyzeContext): AnalyzerOutput {
+   401→  const checks: CheckResult[] = [];
+   402→  const findings: Finding[] = [];
+   403→  const p = ctx.homepage;
+   404→
+   405→  const title = p.title;
+   406→  const titleLen = title.length;
+   407→  checks.push({
+   408→    id: 'title',
+   409→    label: 'Title tag',
+   410→    status: titleLen === 0 ? 'fail' : titleLen >= 15 && titleLen <= 65 ? 'pass' : 'warn',
+   411→    detail: titleLen === 0 ? 'Missing <title>' : `${titleLen} characters: "${title}"`,
+   412→  });
+   413→  if (titleLen === 0)
+   414→    findings.push(
+   415→      finding(
+   416→        'no-title',
+   417→        'content',
+   418→        'critical',
+   419→        'Homepage has no title tag',
+   420→        ['<title> element is empty or missing'],
+   421→        'The title tag is still the single strongest on-page signal and is what users click in search results.',
+   422→        'Write a 50-60 character title: what you do + where you do it + brand.',
+   423→        'Rankings and click-through rate',
+   424→        'quick'
+   425→      )
+   426→    );
+   427→  else if (titleLen < 15 || titleLen > 65)
+   428→    findings.push(
+   429→      finding(
+   430→        'title-length',
+   431→        'content',
+   432→        'medium',
+   433→        titleLen < 15 ? 'Title tag is too short' : 'Title tag is too long',
+   434→        [`Current title (${titleLen} chars): "${title}"`],
+   435→        titleLen < 15
+   436→          ? 'Short titles waste the most valuable on-page space you have.'
+   437→          : 'Long titles get cut off in search results, hiding your differentiators.',
+   438→        titleLen < 15
+   439→          ? 'Expand it to describe your main service and location.'
+   440→          : 'Tighten it to under about 60 characters with the important words first.',
+   441→        'Click-through rate and keyword relevance',
+   442→        'quick'
+   443→      )
+   444→    );
+   445→
+   446→  const descLen = p.metaDescription.length;
+   447→  checks.push({
+   448→    id: 'meta-description',
+   449→    label: 'Meta description',
+   450→    status: descLen === 0 ? 'warn' : descLen >= 50 && descLen <= 165 ? 'pass' : 'warn',
+   451→    detail: descLen === 0 ? 'Missing meta description' : `${descLen} characters`,
+   452→  });
+   453→  if (descLen === 0)
+   454→    findings.push(
+   455→      finding(
+   456→        'no-meta-description',
+   457→        'content',
+   458→        'medium',
+   459→        'Homepage has no meta description',
+   460→        ['<meta name="description"> is missing'],
+   461→        'Without a description, Google invents its own snippet from page text, which rarely sells your business as well as you could.',
+   462→        'Write a 140-160 character description with your main service, area, and a reason to click.',
+   463→        'Click-through rate',
+   464→        'quick'
+   465→      )
+   466→    );
+   467→
+   468→  checks.push({
+   469→    id: 'h1',
+   470→    label: 'H1 heading',
+   471→    status: p.h1s.length === 1 ? 'pass' : p.h1s.length === 0 ? 'fail' : 'warn',
+   472→    detail: p.h1s.length === 0 ? 'No H1 found' : `${p.h1s.length} H1(s): ${p.h1s.slice(0, 2).join(' | ')}`,
+   473→  });
+   474→  if (p.h1s.length === 0)
+   475→    findings.push(
+   476→      finding(
+   477→        'no-h1',
+   478→        'content',
+   479→        'high',
+   480→        'Homepage has no H1 heading',
+   481→        ['Zero <h1> elements found'],
+   482→        'The H1 tells both visitors and search engines what the page is about in one line.',
+   483→        'Add one clear H1 near the top stating your primary offer.',
+   484→        'Relevance clarity',
+   485→        'quick'
+   486→      )
+   487→    );
+   488→
+   489→  checks.push({
+   490→    id: 'heading-structure',
+   491→    label: 'Subheading structure (H2s)',
+   492→    status: p.h2s.length >= 2 ? 'pass' : p.h2s.length === 1 ? 'warn' : 'warn',
+   493→    detail: `${p.h2s.length} H2, ${p.h3s.length} H3`,
+   494→  });
+   495→  if (p.h2s.length < 2)
+   496→    findings.push(
+   497→      finding(
+   498→        'few-h2',
+   499→        'content',
+   500→        'low',
+   501→        'Very few subheadings on the homepage',
+   502→        [`${p.h2s.length} H2 heading(s) found`],
+   503→        'Subheadings organize the page for readers and give search engines context about your services.',
+   504→        'Break the homepage into scannable sections with descriptive H2s (services, areas served, why us, proof).',
+   505→        'Scannability and topical relevance',
+   506→        'medium'
+   507→      )
+   508→    );
+   509→
+   510→  const withAlt = p.images.filter((i) => (i.alt ?? '').length > 0).length;
+   511→  const altPct = p.images.length ? Math.round((withAlt / p.images.length) * 100) : 100;
+   512→  checks.push({
+   513→    id: 'alt-coverage',
+   514→    label: 'Image alt text coverage',
+   515→    status: p.images.length === 0 ? 'na' : altPct >= 90 ? 'pass' : altPct >= 50 ? 'warn' : 'fail',
+   516→    detail: p.images.length === 0 ? 'No images found' : `${withAlt}/${p.images.length} images have alt text (${altPct}%)`,
+   517→  });
+   518→  if (p.images.length > 0 && altPct < 90)
+   519→    findings.push(
+   520→      finding(
+   521→        'alt-text',
+   522→        'content',
+   523→        altPct < 50 ? 'medium' : 'low',
+   524→        `${p.images.length - withAlt} images missing alt text`,
+   525→        [
+   526→          `${withAlt} of ${p.images.length} images have alt text (${altPct}%)`,
+   527→          ...p.images.filter((i) => !i.alt).slice(0, 3).map((i) => i.src.split('/').slice(-1)[0].slice(0, 60)),
+   528→        ],
+   529→        'Alt text makes images accessible to screen readers and tells search engines what pictures show. It is also required for image search visibility.',
+   530→        'Describe each meaningful image in a short alt attribute (what it shows, in context).',
+   531→        'Accessibility and image search',
+   532→        'quick'
+   533→      )
+   534→    );
+   535→
+   536→  checks.push({
+   537→    id: 'internal-links',
+   538→    label: 'Internal linking',
+   539→    status: p.internalLinkCount >= 5 ? 'pass' : p.internalLinkCount >= 1 ? 'warn' : 'fail',
+   540→    detail: `${p.internalLinkCount} internal links on homepage`,
+   541→  });
+   542→  if (p.internalLinkCount < 5)
+   543→    findings.push(
+   544→      finding(
+   545→        'internal-links',
+   546→        'content',
+   547→        'medium',
+   548→        'Very few internal links',
+   549→        [`${p.internalLinkCount} internal links found on the homepage`],
+   550→        'Internal links spread authority to your service and location pages and guide visitors to the next step.',
+   551→        'Link prominently to your main service pages, location pages, and contact page from the homepage.',
+   552→        'Page authority distribution',
+   553→        'medium'
+   554→      )
+   555→    );
+   556→
+   557→  checks.push({
+   558→    id: 'home-word-count',
+   559→    label: 'Homepage content depth',
+   560→    status: p.wordCount >= 400 ? 'pass' : p.wordCount >= 150 ? 'warn' : 'fail',
+   561→    detail: `${p.wordCount} words of visible text`,
+   562→  });
+   563→  if (p.wordCount < 400)
+   564→    findings.push(
+   565→      finding(
+   566→        'thin-home',
+   567→        'content',
+   568→        p.wordCount < 150 ? 'high' : 'medium',
+   569→        'Homepage has very little text',
+   570→        [`${p.wordCount} words of visible text found`],
+   571→        'Pages with almost no text give search engines nothing to rank and customers nothing to be convinced by.',
+   572→        'Add the content customers actually search for: services, areas served, proof, FAQs.',
+   573→        'Relevance and conversion',
+   574→        'medium'
+   575→      )
+   576→    );
+   577→
+   578→  const thinPages = ctx.pages.filter((pg) => pg.ok && pg.words < 300);
+   579→  const thinRatio = ctx.pages.length ? thinPages.length / ctx.pages.length : 0;
+   580→  checks.push({
+   581→    id: 'thin-pages',
+   582→    label: 'Thin pages (sampled)',
+   583→    status: ctx.pages.length === 0 ? 'na' : thinRatio > 0.34 ? 'warn' : thinRatio > 0 ? 'warn' : 'pass',
+   584→    detail: ctx.pages.length === 0 ? 'No internal pages sampled' : `${thinPages.length} of ${ctx.pages.length} sampled pages under 300 words`,
+   585→  });
+   586→  if (thinPages.length > 0 && thinRatio > 0.34)
+   587→    findings.push(
+   588→      finding(
+   589→        'thin-pages',
+   590→        'content',
+   591→        'medium',
+   592→        `${thinPages.length} of ${ctx.pages.length} sampled pages are thin`,
+   593→        thinPages.slice(0, 4).map((pg) => `${pg.url} (${pg.words} words)`),
+   594→        'Thin pages dilute your site quality. Google judges the whole site, not just the homepage.',
+   595→        'Either expand these pages with genuinely useful content or consolidate/redirect them.',
+   596→        'Site-wide quality signals',
+   597→        'medium'
+   598→      )
+   599→    );
+   600→
+   601→  const sampledTitles = [title, ...ctx.pages.map((pg) => pg.title)].filter(Boolean);
+   602→  const uniqueTitles = new Set(sampledTitles.map((t) => t.toLowerCase()));
+   603→  checks.push({
+   604→    id: 'title-uniqueness',
+   605→    label: 'Unique titles (sampled pages)',
+   606→    status: sampledTitles.length <= 1 ? 'na' : uniqueTitles.size === sampledTitles.length ? 'pass' : 'warn',
+   607→    detail: `${uniqueTitles.size} unique titles across ${sampledTitles.length} pages checked`,
+   608→  });
+   609→  if (sampledTitles.length > 1 && uniqueTitles.size !== sampledTitles.length)
+   610→    findings.push(
+   611→      finding(
+   612→        'duplicate-titles',
+   613→        'content',
+   614→        'medium',
+   615→        'Duplicate or missing page titles',
+   616→        sampledTitles
+   617→          .map((t) => t)
+   618→          .filter((t, i, arr) => arr.findIndex((x) => x.toLowerCase() === t.toLowerCase()) !== i || t === '')
+   619→          .slice(0, 3)
+   620→          .map((t) => `"${t}" appears more than once`),
+   621→        'When every page has the same title, search engines struggle to know which page to show for which query.',
+   622→        'Give every page its own descriptive title.',
+   623→        'Query-level relevance',
+   624→        'quick'
+   625→      )
+   626→    );
+   627→
+   628→  const ogComplete = p.ogTags.title && p.ogTags.image;
+   629→  checks.push({
+   630→    id: 'og-tags',
+   631→    label: 'Open Graph tags (social previews)',
+   632→    status: ogComplete ? 'pass' : p.ogTags.title ? 'warn' : 'warn',
+   633→    detail: ogComplete ? 'og:title and og:image present' : 'og:title/og:image incomplete',
+   634→  });
+   635→  if (!ogComplete)
+   636→    findings.push(
+   637→      finding(
+   638→        'og-tags',
+   639→        'content',
+   640→        'low',
+   641→        'Social preview cards incomplete',
+   642→        [`og:title: ${p.ogTags.title}, og:image: ${p.ogTags.image}`],
+   643→        'When your pages are shared on social or messaging apps, missing Open Graph tags produce a bare, unclickable-looking card.',
+   644→        'Add og:title, og:description and og:image to your template.',
+   645→        'Social click-through',
+   646→        'quick'
+   647→      )
+   648→    );
+   649→
+   650→  const now = new Date().getFullYear();
+   651→  const fresh = p.timeElements > 0 || (p.recentYear !== null && now - p.recentYear <= 2);
+   652→  checks.push({
+   653→    id: 'freshness-signals',
+   654→    label: 'Freshness signals',
+   655→    status: fresh ? 'pass' : p.recentYear ? 'warn' : 'na',
+   656→    detail:
+   657→      p.timeElements > 0
+   658→        ? `${p.timeElements} <time> elements found`
+   659→        : p.recentYear
+   660→          ? `Most recent year found in text: ${p.recentYear}`
+   661→          : 'No dates or <time> elements found on homepage',
+   662→  });
+   663→
+   664→  return { key: 'content', label: 'Content & On-Page', checks, findings };
+   665→}
+   666→
+   667→// ---------------------------------------------------------------------------
+   668→// 3. AI Search / GEO / AEO Specialist
+   669→// ---------------------------------------------------------------------------
+   670→export function analyzeAi(ctx: AnalyzeContext): AnalyzerOutput {
+   671→  const checks: CheckResult[] = [];
+   672→  const findings: Finding[] = [];
+   673→  const p = ctx.homepage;
+   674→
+   675→  checks.push({
+   676→    id: 'llms-txt',
+   677→    label: 'llms.txt file',
+   678→    status: ctx.llms.found ? 'pass' : 'warn',
+   679→    detail: ctx.llms.found ? `Found (${ctx.llms.bytes} bytes)` : 'No /llms.txt found (optional per the llmstxt.org proposal)',
+   680→  });
+   681→  if (!ctx.llms.found)
+   682→    findings.push(
+   683→      finding(
+   684→        'no-llms-txt',
+   685→        'ai',
+   686→        'low',
+   687→        'No llms.txt file',
+   688→        ['Request to /llms.txt returned no content'],
+   689→        'llms.txt is a young proposal for giving AI assistants a curated map of your site. It is optional today, cheap to add, and impossible to use if it does not exist.',
+   690→        'Create a simple /llms.txt listing your key pages with one-line descriptions. Guide: "How to Create an llms.txt File" in our resource center.',
+   691→        'AI assistant discoverability',
+   692→        'quick'
+   693→      )
+   694→    );
+   695→
+   696→  const blocked = ctx.robots.aiCrawlers.filter((c) => c.policy === 'blocked');
+   697→  const mentionedAllowed = ctx.robots.aiCrawlers.filter((c) => c.policy === 'allowed');
+   698→  const crawlerStatus: CheckResult['status'] = blocked.length > 0 ? 'fail' : 'pass';
+   699→  checks.push({
+   700→    id: 'ai-crawler-access',
+   701→    label: 'AI crawler access (robots.txt)',
+   702→    status: !ctx.robots.found ? 'warn' : crawlerStatus,
+   703→    detail: !ctx.robots.found
+   704→      ? 'No robots.txt: AI crawlers default to allowed'
+   705→      : blocked.length
+   706→        ? `Blocked: ${blocked.map((b) => b.name).join(', ')}`
+   707→        : mentionedAllowed.length
+   708→          ? `Specific rules for: ${mentionedAllowed.map((b) => b.name).join(', ')} (not fully blocked)`
+   709→          : 'No AI crawler blocks found (default: allowed)',
+   710→  });
+   711→  if (blocked.length)
+   712→    findings.push(
+   713→      finding(
+   714→        'ai-crawlers-blocked',
+   715→        'ai',
+   716→        'high',
+   717→        'AI crawlers are blocked in robots.txt',
+   718→        blocked.map((b) => `${b.name}: ${b.detail ?? 'Disallow: /'}`),
+   719→        'You are actively telling AI search systems not to read your site. If that was intentional (e.g., staging), fine; if not, you are invisible to AI answers.',
+   720→        'Remove or narrow the Disallow rules for the AI crawlers you want reading your site.',
+   721→        'AI search visibility',
+   722→        'quick'
+   723→      )
+   724→    );
+   725→
+   726→  const valuable = new Set(['Organization', 'LocalBusiness', 'WebSite', 'FAQPage', 'Article', 'BlogPosting', 'BreadcrumbList', 'Product', 'Service', 'ProfessionalService', 'Restaurant', 'HomeAndConstructionBusiness']);
+   727→  const foundTypes = p.jsonLdTypes.filter((t) => valuable.has(t));
+   728→  const uniqueTypes = [...new Set(foundTypes)];
+   729→  checks.push({
+   730→    id: 'structured-data',
+   731→    label: 'Structured data (JSON-LD)',
+   732→    status: uniqueTypes.length >= 3 ? 'pass' : uniqueTypes.length >= 1 ? 'warn' : 'fail',
+   733→    detail: uniqueTypes.length ? `Found: ${uniqueTypes.join(', ')}` : 'No JSON-LD structured data found on homepage',
+   734→  });
+   735→  if (uniqueTypes.length < 3)
+   736→    findings.push(
+   737→      finding(
+   738→        'little-schema',
+   739→        'ai',
+   740→        uniqueTypes.length === 0 ? 'high' : 'medium',
+   741→        uniqueTypes.length === 0 ? 'No structured data found' : 'Minimal structured data',
+   742→        uniqueTypes.length ? [`JSON-LD types present: ${uniqueTypes.join(', ')}`] : ['Zero application/ld+json blocks on the homepage'],
+   743→        'Structured data is machine-readable labeling that helps search engines and AI systems understand who you are, what you offer, and where you operate.',
+   744→        'Add Organization + WebSite schema sitewide, LocalBusiness schema if you serve a local area, and FAQPage where FAQs exist. See "Schema Markup Explained".',
+   745→        'Rich results and machine comprehension',
+   746→        'medium'
+   747→      )
+   748→    );
+   749→
+   750→  checks.push({
+   751→    id: 'question-content',
+   752→    label: 'Question-based headings',
+   753→    status: p.questionHeadings >= 3 ? 'pass' : p.questionHeadings >= 1 ? 'warn' : 'warn',
+   754→    detail: `${p.questionHeadings} question-shaped H2/H3 headings on homepage`,
+   755→  });
+   756→  if (p.questionHeadings < 3)
+   757→    findings.push(
+   758→      finding(
+   759→        'few-question-headings',
+   760→        'ai',
+   761→        'medium',
+   762→        'Few question-shaped headings',
+   763→        [`${p.questionHeadings} question-form H2/H3 found on homepage`],
+   764→        'AI assistants gravitate to content that mirrors how people ask: "How much does X cost?", "Do you offer Y?". Question headings with a direct answer underneath are the most quotable format.',
+   765→        'Add an FAQ or Q&A section: real customer questions as headings, 2-4 sentence answers underneath.',
+   766→        'AI citation likelihood',
+   767→        'medium'
+   768→      )
+   769→    );
+   770→
+   771→  const answerSignals: string[] = [];
+   772→  if (p.hasLists) answerSignals.push('bullet/numbered lists');
+   773→  if (p.hasTables) answerSignals.push('tables');
+   774→  if (p.avgParagraphWords > 0 && p.avgParagraphWords <= 90) answerSignals.push('short paragraphs');
+   775→  const answerStatus: CheckResult['status'] = answerSignals.length >= 2 ? 'pass' : answerSignals.length === 1 ? 'warn' : 'warn';
+   776→  checks.push({
+   777→    id: 'answer-format',
+   778→    label: 'Answer-friendly formatting',
+   779→    status: answerStatus,
+   780→    detail: answerSignals.length ? `Signals: ${answerSignals.join(', ')}` : 'No lists, tables, or scannable formatting detected',
+   781→  });
+   782→
+   783→  const machineContact = p.telLinks > 0 || p.mailtoLinks > 0;
+   784→  checks.push({
+   785→    id: 'machine-contact',
+   786→    label: 'Machine-readable contact info',
+   787→    status: machineContact ? 'pass' : 'warn',
+   788→    detail: `${p.telLinks} tel: link(s), ${p.mailtoLinks} mailto: link(s)`,
+   789→  });
+   790→  if (!machineContact)
+   791→    findings.push(
+   792→      finding(
+   793→        'machine-contact',
+   794→        'ai',
+   795→        'low',
+   796→        'No click-to-call or email links',
+   797→        ['No tel: or mailto: links found on the homepage'],
+   798→        'Plain-text contact details are easy for humans and fragile for machines. Clickable links make your contact info unambiguous to assistants and crawlers.',
+   799→        'Use tel: and mailto: links for phone and email.',
+   800→        'Contact clarity for humans and AI',
+   801→        'quick'
+   802→      )
+   803→    );
+   804→
+   805→  checks.push({
+   806→    id: 'og-ai-meta',
+   807→    label: 'Descriptive meta tags for AI summaries',
+   808→    status: p.ogTags.title && p.ogTags.description ? 'pass' : 'warn',
+   809→    detail: 'AI systems often reuse title/description/og text when describing your business',
+   810→  });
+   811→
+   812→  return { key: 'ai', label: 'AI Search Readiness', checks, findings };
+   813→}
+   814→
+   815→// ---------------------------------------------------------------------------
+   816→// 4. Local SEO Specialist
+   817→// ---------------------------------------------------------------------------
+   818→export function analyzeLocal(ctx: AnalyzeContext): AnalyzerOutput {
+   819→  const checks: CheckResult[] = [];
+   820→  const findings: Finding[] = [];
+   821→  const p = ctx.homepage;
+   822→
+   823→  const localTypes = p.jsonLdTypes.filter((t) =>
+   824→    /LocalBusiness|Organization|ProfessionalService|Restaurant|HomeAndConstructionBusiness|Store|HealthAndBeautyBusiness|AutomotiveBusiness/i.test(t)
+   825→  );
+   826→  const hasLocalSchema = localTypes.length > 0;
+   827→  checks.push({
+   828→    id: 'localbusiness-schema',
+   829→    label: 'LocalBusiness / Organization schema',
+   830→    status: hasLocalSchema ? 'pass' : 'warn',
+   831→    detail: hasLocalSchema ? `Found: ${[...new Set(localTypes)].join(', ')}` : 'No LocalBusiness or Organization schema on homepage',
+   832→  });
+   833→  if (!hasLocalSchema)
+   834→    findings.push(
+   835→      finding(
+   836→        'no-local-schema',
+   837→        'local',
+   838→        'medium',
+   839→        'No LocalBusiness schema markup',
+   840→        ['No LocalBusiness/Organization JSON-LD found'],
+   841→        'LocalBusiness schema spells out your name, address, phone, hours and services in a format search engines parse reliably.',
+   842→        'Add LocalBusiness JSON-LD with NAP, hours and geo coordinates. See "Schema Markup Explained".',
+   843→        'Local and AI visibility',
+   844→        'medium'
+   845→      )
+   846→    );
+   847→
+   848→  checks.push({
+   849→    id: 'tel-link',
+   850→    label: 'Click-to-call link',
+   851→    status: p.telLinks > 0 ? 'pass' : 'warn',
+   852→    detail: p.telLinks > 0 ? `${p.telLinks} tel: link(s)` : 'No tel: links found',
+   853→  });
+   854→  if (p.telLinks === 0)
+   855→    findings.push(
+   856→      finding(
+   857→        'no-tel-link',
+   858→        'local',
+   859→        'medium',
+   860→        'Phone number is not click-to-call',
+   861→        ['No tel: links on the homepage'],
+   862→        'More than half of local-intent searches happen on a phone. If the number is not tappable, you lose the hottest leads.',
+   863→        'Wrap the phone number in <a href="tel:...">.',
+   864→        'Mobile lead conversion',
+   865→        'quick'
+   866→      )
+   867→    );
+   868→
+   869→  checks.push({
+   870→    id: 'address-visible',
+   871→    label: 'Address visible on site',
+   872→    status: p.addressInText || p.geoMeta ? 'pass' : 'warn',
+   873→    detail: p.addressInText ? 'Street-address pattern found in page text' : p.geoMeta ? 'Geo meta tags found' : 'No street address or geo meta detected on homepage',
+   874→  });
+   875→  if (!p.addressInText && !p.geoMeta)
+   876→    findings.push(
+   877→      finding(
+   878→        'no-address',
+   879→        'local',
+   880→        'low',
+   881→        'No address found on the homepage',
+   882→        ['No street-address pattern or geo meta tags detected'],
+   883→        'Consistent NAP (name, address, phone) on your site underpins local rankings. If you are a service-area business that hides its address, make sure your service areas are stated clearly instead.',
+   884→        'Display your address (or service areas) clearly on the homepage and contact page.',
+   885→        'Local relevance signals',
+   886→        'quick'
+   887→      )
+   888→    );
+   889→
+   890→  const contactPage = ctx.pages.find((pg) => /contact|about|location/i.test(pg.url));
+   891→  if (contactPage?.parsed) {
+   892→    const homepagePhone = p.telLinks > 0;
+   893→    checks.push({
+   894→      id: 'nap-consistency',
+   895→      label: 'Contact info on contact/about page',
+   896→      status: contactPage.parsed.telLinks > 0 || contactPage.parsed.phoneInText ? 'pass' : 'warn',
+   897→      detail: homepagePhone ? 'Homepage has tel link; contact page checked' : 'Contact page checked for phone presence',
+   898→    });
+   899→  } else {
+   900→    checks.push({ id: 'nap-consistency', label: 'Contact page check', status: 'na', detail: 'No contact/about page found in navigation sample' });
+   901→  }
+   902→
+   903→  const locationProvided = Boolean(ctx.location);
+   904→  const locationInTitle = locationProvided ? p.title.toLowerCase().includes((ctx.location ?? '').toLowerCase().split(',')[0]) : false;
+   905→  checks.push({
+   906→    id: 'location-in-title',
+   907→    label: 'Location in title tag',
+   908→    status: !locationProvided ? 'na' : locationInTitle ? 'pass' : 'warn',
+   909→    detail: !locationProvided ? 'No location provided for this audit' : locationInTitle ? `"${ctx.location}" appears in the title` : `Title does not mention "${ctx.location}"`,
+   910→  });
+   911→  if (locationProvided && !locationInTitle)
+   912→    findings.push(
+   913→      finding(
+   914→        'location-title',
+   915→        'local',
+   916→        'medium',
+   917→        'Target location missing from homepage title',
+   918→        [`Title: "${p.title}"`, `Provided location: ${ctx.location}`],
+   919→        'For local searches, city/area names in titles remain one of the strongest relevance signals.',
+   920→        'Work your city or service area into the homepage title naturally.',
+   921→        'Local pack eligibility',
+   922→        'quick'
+   923→      )
+   924→    );
+   925→
+   926→  checks.push({
+   927→    id: 'map-embed',
+   928→    label: 'Map embed / geo signals',
+   929→    status: p.mapEmbeds > 0 || p.geoMeta ? 'pass' : 'warn',
+   930→    detail: `${p.mapEmbeds} map embed(s), geo meta: ${p.geoMeta}`,
+   931→  });
+   932→
+   933→  const hasReviewsSchema = p.jsonLdTypes.some((t) => /AggregateRating|Review/i.test(t));
+   934→  checks.push({
+   935→    id: 'review-signals',
+   936→    label: 'Review markup',
+   937→    status: hasReviewsSchema ? 'pass' : 'na',
+   938→    detail: hasReviewsSchema ? 'AggregateRating/Review schema found' : 'No review markup on homepage (only add markup for real, on-page reviews)',
+   939→  });
+   940→
+   941→  const hasHours = /open (mon|tue|wed|thu|fri|sat|sun)|hours:/i.test(JSON.stringify(p.jsonLdRaw).slice(0, 20000)) || /mon(?:day)?[-–to ]{1,4}(?:fri|sat)/i.test('');
+   942→  checks.push({
+   943→    id: 'hours',
+   944→    label: 'Business hours',
+   945→    status: hasHours ? 'pass' : 'warn',
+   946→    detail: hasHours ? 'Hours found in structured data' : 'No opening hours detected in structured data',
+   947→  });
+   948→  if (!hasHours)
+   949→    findings.push(
+   950→      finding(
+   951→        'no-hours',
+   952→        'local',
+   953→        'low',
+   954→        'Business hours not machine-readable',
+   955→        ['No openingHours specification found'],
+   956→        'Hours in structured data (and on your Google Business Profile) feed "open now" searches, which convert extremely well.',
+   957→        'Add opening hours to your LocalBusiness schema and keep your Google Business Profile hours current.',
+   958→        '"Open now" visibility',
+   959→        'quick'
+   960→      )
+   961→    );
+   962→
+   963→  return { key: 'local', label: 'Local SEO', checks, findings };
+   964→}
+   965→
+   966→// ---------------------------------------------------------------------------
+   967→// 5. Performance Specialist
+   968→// ---------------------------------------------------------------------------
+   969→export function analyzePerformance(ctx: AnalyzeContext): AnalyzerOutput {
+   970→  const checks: CheckResult[] = [];
+   971→  const findings: Finding[] = [];
+   972→  const p = ctx.homepage;
+   973→
+   974→  const ttfb = ctx.ttfbMs;
+   975→  checks.push({
+   976→    id: 'ttfb',
+   977→    label: 'Server response time (TTFB)',
+   978→    status: ttfb === null ? 'na' : ttfb <= 400 ? 'pass' : ttfb <= 900 ? 'warn' : 'fail',
+   979→    detail: ttfb === null ? 'Not measurable this run' : `${ttfb}ms to first byte from our crawler`,
+   980→  });
+   981→  if (ttfb !== null && ttfb > 900)
+   982→    findings.push(
+   983→      finding(
+   984→        'slow-ttfb',
+   985→        'performance',
+   986→        'high',
+   987→        `Slow server response (${ttfb}ms)`,
+   988→        [`Time to first byte: ${ttfb}ms`],
+   989→        'Everything else on the page waits for the server. A slow first byte drags down every metric Google measures, including Core Web Vitals.',
+   990→        'Add page caching, check your hosting plan, or move to a host/CDN with edge caching.',
+   991→        'Every Core Web Vital',
+   992→        'medium'
+   993→      )
+   994→    );
+   995→
+   996→  const kb = Math.round(ctx.htmlBytes / 1024);
+   997→  checks.push({
+   998→    id: 'html-size',
+   999→    label: 'HTML document size',
+  1000→    status: kb <= 120 ? 'pass' : kb <= 300 ? 'warn' : 'fail',
+  1001→    detail: `${kb} KB of HTML ${''}`,
+  1002→  });
+  1003→  if (kb > 300)
+  1004→    findings.push(
+  1005→      finding(
+  1006→        'html-bloat',
+  1007→        'performance',
+  1008→        'medium',
+  1009→        `Large HTML document (${kb} KB)`,
+  1010→        [`Homepage HTML: ${kb} KB`],
+  1011→        'Oversized HTML usually means builder bloat, inline everything, or rendering the whole site into one page. Mobile users on slow connections pay for every KB.',
+  1012→        'Trim unused markup, move styles to compressed external files, and audit page-builder output.',
+  1013→        'Load time, especially mobile',
+  1014→        'medium'
+  1015→      )
+  1016→    );
+  1017→
+  1018→  const scripts = p.scriptSrcs.length;
+  1019→  checks.push({
+  1020→    id: 'script-count',
+  1021→    label: 'External scripts',
+  1022→    status: scripts <= 10 ? 'pass' : scripts <= 20 ? 'warn' : 'fail',
+  1023→    detail: `${scripts} external scripts, ${p.inlineScriptCount} inline blocks`,
+  1024→  });
+  1025→  if (scripts > 15)
+  1026→    findings.push(
+  1027→      finding(
+  1028→        'script-bloat',
+  1029→        'performance',
+  1030→        scripts > 25 ? 'high' : 'medium',
+  1031→        `${scripts} external scripts loading`,
+  1032→        [...p.marketingScripts.slice(0, 8), `${scripts} total external script files`],
+  1033→        'Every script is a network request that can block rendering. Marketing tags stack up over the years and nobody ever removes them.',
+  1034→        'Audit your tag stack: remove tools you no longer use, consolidate overlapping ones, and load the rest deferred.',
+  1035→        'Load time and mobile performance',
+  1036→        'medium'
+  1037→      )
+  1038→    );
+  1039→
+  1040→  const headBlocking = p.scriptSrcs.length; // approximate: count of scripts (defer/async not parsed per-tag)
+  1041→  checks.push({
+  1042→    id: 'render-blocking',
+  1043→    label: 'Render-blocking resources (approx.)',
+  1044→    status: headBlocking <= 8 && p.stylesheets <= 4 ? 'pass' : headBlocking <= 16 ? 'warn' : 'fail',
+  1045→    detail: `${headBlocking} scripts + ${p.stylesheets} stylesheets`,
+  1046→  });
+  1047→
+  1048→  const noLazy = p.images.filter((i) => !i.lazy);
+  1049→  checks.push({
+  1050→    id: 'lazy-images',
+  1051→    label: 'Image lazy loading',
+  1052→    status: p.images.length === 0 ? 'na' : noLazy.length <= 3 ? 'pass' : noLazy.length <= 8 ? 'warn' : 'fail',
+  1053→    detail: p.images.length === 0 ? 'No images' : `${noLazy.length} of ${p.images.length} images not lazy-loaded`,
+  1054→  });
+  1055→  if (noLazy.length > 8)
+  1056→    findings.push(
+  1057→      finding(
+  1058→        'no-lazy-loading',
+  1059→        'performance',
+  1060→        'medium',
+  1061→        `${noLazy.length} images load eagerly`,
+  1062→        [`${noLazy.length} of ${p.images.length} images lack loading="lazy"`],
+  1063→        'Browsers download non-lazy images immediately, even ones far below the fold. On image-heavy sites this is often the single biggest fix.',
+  1064→        'Add loading="lazy" to images below the fold (most CMSs can do this site-wide).',
+  1065→        'Initial load time',
+  1066→        'quick'
+  1067→      )
+  1068→    );
+  1069→
+  1070→  const noDims = p.images.filter((i) => !i.hasDimensions);
+  1071→  checks.push({
+  1072→    id: 'image-dimensions',
+  1073→    label: 'Image dimensions set',
+  1074→    status: p.images.length === 0 ? 'na' : noDims.length / p.images.length < 0.3 ? 'pass' : 'warn',
+  1075→    detail: `${noDims.length} of ${p.images.length} images missing width/height`,
+  1076→  });
+  1077→
+  1078→  const compression = ctx.headers['content-encoding'] ?? null;
+  1079→  checks.push({
+  1080→    id: 'perf-compression',
+  1081→    label: 'Compression enabled',
+  1082→    status: compression ? 'pass' : 'warn',
+  1083→    detail: compression ?? 'No Content-Encoding on HTML',
+  1084→  });
+  1085→
+  1086→  checks.push({
+  1087→    id: 'cache-headers',
+  1088→    label: 'Cache headers',
+  1089→    status: ctx.headers['cache-control'] ? 'pass' : 'warn',
+  1090→    detail: ctx.headers['cache-control'] ?? 'No Cache-Control header on HTML response',
+  1091→  });
+  1092→
+  1093→  return { key: 'performance', label: 'Performance', checks, findings };
+  1094→}
+  1095→
+  1096→// ---------------------------------------------------------------------------
+  1097→// Scoring
+  1098→// ---------------------------------------------------------------------------
+  1099→export function computeCategoryScores(outputs: AnalyzerOutput[]): CategoryScore[] {
+  1100→  return outputs.map((o) => {
+  1101→    const counted = o.checks.filter((c) => c.status !== 'na');
+  1102→    const points = counted.reduce((n, c) => n + (c.status === 'pass' ? 1 : c.status === 'warn' ? 0.5 : 0), 0);
+  1103→    const score = counted.length ? Math.round((points / counted.length) * 100) : 0;
+  1104→    return { key: o.key, label: o.label, score, checks: o.checks };
+  1105→  });
+  1106→}
+  1107→
+  1108→export function computeOverall(scores: CategoryScore[]): number {
+  1109→  const byKey = Object.fromEntries(scores.map((s) => [s.key, s.score]));
+  1110→  const localNa = scores.find((s) => s.key === 'local');
+  1111→  const localIsWeakData = localNa && localNa.checks.filter((c) => c.status === 'na').length >= 3;
+  1112→  const weights = localIsWeakData
+  1113→    ? { technical: 0.28, content: 0.28, ai: 0.23, performance: 0.21 }
+  1114→    : { technical: 0.24, content: 0.24, ai: 0.2, performance: 0.18, local: 0.14 };
+  1115→  let total = 0;
+  1116→  let weightSum = 0;
+  1117→  for (const [key, w] of Object.entries(weights)) {
+  1118→    const v = (byKey as Record<string, number>)[key];
+  1119→    if (typeof v === 'number') {
+  1120→      total += v * w;
+  1121→      weightSum += w;
+  1122→    }
+  1123→  }
+  1124→  return weightSum ? Math.round(total / weightSum) : 0;
+  1125→}
+  1126→
+  1127→export function gradeFor(score: number): string {
+  1128→  if (score >= 90) return 'A';
+  1129→  if (score >= 80) return 'B';
+  1130→  if (score >= 70) return 'C';
+  1131→  if (score >= 55) return 'D';
+  1132→  return 'F';
+  1133→}
+  1134→
+  1135→export function collectPages(ctx: AnalyzeContext): PageSummary[] {
+  1136→  return ctx.pages.map((pg) => ({
+  1137→    url: pg.url,
+  1138→    status: pg.status,
+  1139→    title: pg.title,
+  1140→    words: pg.words,
+  1141→    ok: pg.ok,
+  1142→  }));
+  1143→}
+  1144→

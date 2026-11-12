@@ -74,6 +74,9 @@ export interface AuditReport {
   businessName?: string;
   industry?: string;
   location?: string;
+  homeTitle?: string;
+  homeDescription?: string;
+  homeH1?: string;
   scores: {
     overall: number;
     technical: number;
@@ -112,6 +115,20 @@ export interface AuditReport {
   };
   pages: PageSummary[];
   contentIdeas: string[];
+  comparison?: {
+    previousRunAt: string;
+    previousOverall: number;
+    deltas: {
+      overall: number;
+      technical: number;
+      content: number;
+      ai: number;
+      local: number;
+      performance: number;
+    };
+    fixedFindings: string[];
+    newFindings: string[];
+  };
   robotsTxt: { found: boolean; sitemapDeclared: boolean; aiCrawlers: AiCrawlerPolicy[] };
   sitemap: { found: boolean; urlCount: number | null };
   redirectChain: string[];

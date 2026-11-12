@@ -98,7 +98,7 @@ export function HomeView({ navigate, onStartAudit, starting }: {
   const [industry, setIndustry] = useState('');
   const [location, setLocation] = useState('');
   const [showDetails, setShowDetails] = useState(false);
-  const [recent, setRecent] = useState<Array<{ host: string; score: number | null }>>([]);
+  const [recent, setRecent] = useState<Array<{ shareId: string; host: string; score: number | null }>>([]);
 
   useEffect(() => {
     fetch('/api/audits/recent')
@@ -216,7 +216,7 @@ export function HomeView({ navigate, onStartAudit, starting }: {
               <div className="flex gap-2">
                 {recent.slice(0, 8).map((r) => (
                   <button
-                    key={r.host + (r.score ?? '')}
+                    key={r.shareId}
                     onClick={() => onStartAudit({ url: r.host })}
                     className="shrink-0 inline-flex items-center gap-1.5 rounded-full border border-border bg-background/60 px-2.5 py-1 text-[11px] hover:border-primary/50 transition-colors"
                     title={`Re-run audit for ${r.host}`}

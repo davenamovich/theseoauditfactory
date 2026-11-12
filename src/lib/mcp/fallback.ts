@@ -14,15 +14,35 @@ export interface FallbackResult {
 }
 
 function contextText(ctx: BuildContext): string {
-  return [
-    `Business: ${ctx.businessName || ctx.website}`,
-    ctx.industry ? `Industry: ${ctx.industry}` : '',
-    ctx.location ? `Location: ${ctx.location}` : '',
-    ctx.topic ? `Focus: ${ctx.topic}` : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
+  const parts: string[] = [];
+  parts.push(`Business: ${ctx.businessName || ctx.website}`);
+  if (ctx.industry) parts.push(`Industry: ${ctx.industry}`);
+  if (ctx.location) parts.push(`Location: ${ctx.location}`);
+  if (ctx.topic) parts.push(`Focus: ${ctx.topic}`);
+
+  // Ground everything in what the crawler actually saw. Without this the
+  // copywriter invents an unrelated business (e.g. "wardrobe" for a meme engine).
+  const report = ctx.report;
+  if (report) {
+    if (report.homeTitle) parts.push(`Website homepage title: "${report.homeTitle}"`);
+    if (report.homeDescription) parts.push(`Website meta description: "${report.homeDescription}"`);
+    if (report.homeH1) parts.push(`Homepage main headline: "${report.homeH1}"`);
+    const pageTitles = (report.pages ?? [])
+      .filter((p) => p.ok && p.title)
+      .slice(0, 4)
+      .map((p) => `"${p.title}" (${p.url})`);
+    if (pageTitles.length) parts.push(`Real pages on the site: ${pageTitles.join('; ')}`);
+    if (report.contentIdeas?.length) parts.push(`Content angles from our audit: ${report.contentIdeas.slice(0, 3).join(' | ')}`);
+    const topProblem = report.topProblems?.[0]?.title;
+    if (topProblem) parts.push(`Top audit finding: ${topProblem}`);
+  }
+  return parts.join('\n');
 }
+
+const ANTI_HALLUCINATION =
+  'Work ONLY with the business context provided above. Do not invent an unrelated industry, product or offer. ' +
+  'If the context is thin, write about what the website titles and pages actually describe, in generic small-business terms. ' +
+  'No emojis.';
 
 const IMAGE_TYPES = new Set(['meme', 'promo-meme', 'carousel', 'social-graphic']);
 
@@ -42,7 +62,8 @@ export async function generateFallback(assetType: string, ctx: BuildContext): Pr
         {
           role: 'assistant',
           content:
-            'You are a punchy social media copywriter. Return JSON only: {"caption": "one short meme-style caption under 12 words", "postCopy": "a ready-to-post 2-3 sentence post with a call to action"}. No markdown fences.',
+            'You are a punchy social media copywriter. Return JSON only: {"caption": "one short meme-style caption under 12 words", "postCopy": "a ready-to-post 2-3 sentence post with a call to action"}. No markdown fences. ' +
+            ANTI_HALLUCINATION,
         },
         { role: 'user', content: `${context}\n\nWrite the caption and post copy.` },
       ],
@@ -77,7 +98,7 @@ export async function generateFallback(assetType: string, ctx: BuildContext): Pr
   const prompt = prompts[assetType] ?? 'Write ready-to-post marketing copy for this business.';
   const completion = await zai.chat.completions.create({
     messages: [
-      { role: 'assistant', content: 'You are a direct-response copywriter for small businesses. Be specific, honest and punchy. No emojis.' },
+      { role: 'assistant', content: `You are a direct-response copywriter for small businesses. Be specific, honest and punchy. ${ANTI_HALLUCINATION}` },
       { role: 'user', content: `${context}\n\n${prompt}` },
     ],
     thinking: { type: 'disabled' },
