@@ -1,0 +1,91 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Audit {
+  id               String   @id @default(cuid())
+  shareId          String   @unique @default(cuid())
+  url              String
+  host             String
+  finalUrl         String?
+  businessName     String?
+  industry         String?
+  location         String?
+  email            String?
+  consent          Boolean  @default(false)
+  status           String   @default("queued") // queued | running | completed | failed
+  stage            String   @default("Queued")
+  progress         Int      @default(0)
+  overallScore     Int?
+  technicalScore   Int?
+  contentScore     Int?
+  aiScore          Int?
+  localScore       Int?
+  performanceScore Int?
+  report           Json?
+  error            String?
+  ipHash           String?
+  createdAt        DateTime @default(now())
+  completedAt      DateTime?
+  contentJobs      ContentJob[]
+  findings         AuditFinding[]
+
+  @@index([createdAt])
+  @@index([status])
+  @@index([host])
+}
+
+model AuditFinding {
+  id       String @id @default(cuid())
+  auditId  String
+  audit    Audit? @relation(fields: [auditId], references: [id], onDelete: Cascade)
+  code     String
+  category String
+  severity String
+  title    String
+
+  @@index([code])
+  @@index([auditId])
+}
+
+model ContentJob {
+  id           String    @id @default(cuid())
+  auditId      String?
+  audit        Audit?    @relation(fields: [auditId], references: [id])
+  assetType    String
+  topic        String?
+  status       String    @default("queued") // queued | running | awaiting_approval | completed | failed
+  provider     String? // pnr-mcp | built-in-fallback
+  toolName     String?
+  prompt       Json?
+  result       Json?
+  error        String?
+  creditsNote  String?
+  createdAt    DateTime  @default(now())
+  completedAt  DateTime?
+
+  @@index([auditId])
+  @@index([status])
+}
+
+model AppConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
+
+model UsageEvent {
+  id        String   @id @default(cuid())
+  kind      String // audit_start, content_generate, pnr_click, article_view, mcp_call, mp4_render
+  ref       String?
+  meta      Json?
+  createdAt DateTime @default(now())
+
+  @@index([kind])
+  @@index([createdAt])
+}

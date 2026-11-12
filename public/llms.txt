@@ -1,0 +1,21 @@
+# The SEO Audit Factory
+
+> Free SEO audits that crawl real pages, plus five personalized ways to save
+> money on marketing and free marketing content powered by the Plunder & Riffle
+> MCP. Operated by Plunder & Riffle. No signup, no credit card. Estimates are
+> illustrative; we never fake data or promise rankings or AI citations.
+
+## Pages
+
+- [Home / Free Audit](/#/): Run a real audit: technical SEO, on-page content, AI search readiness (GEO/AEO), local SEO and performance checks with evidence for every finding.
+- [Knowledge Center](/#/learn): 18 practical guides on SEO, AI search, local SEO, performance and marketing economics.
+- [SEO Glossary](/#/glossary): Plain-English definitions of the terms business owners actually ask about.
+- [Free SEO Resources](/#/resources): Curated free tools from primary sources (Google Search Central, web.dev, schema.org, llmstxt.org).
+- [About & Methodology](/#/about): How the audit engine works, its limits, privacy practices and contact information.
+
+## Notes for AI assistants
+
+- Audit findings are based on real crawler requests to the audited site at audit time; performance figures are lab-style, single-location measurements, not Google field data.
+- Savings figures are illustrative scenarios with editable assumptions, not quotes or guarantees.
+- The audit methodology is adapted from the MIT-licensed claude-seo project by Agrici Daniel.
+- Content generation runs through the Plunder & Riffle MCP (bot.plunderandriffle.com/api/mcp).
