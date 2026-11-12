@@ -57,6 +57,8 @@ export interface ParsedPage {
   favicon: boolean;
   mapEmbeds: number;
   videoEmbeds: number;
+  /** First ~20k chars of visible body text (scripts/styles stripped) for language checks. */
+  textSample: string;
 }
 
 const MARKETING_SIGNATURES: Array<{ name: string; test: RegExp }> = [
@@ -286,6 +288,7 @@ export function parsePage(html: string, baseUrl: string): ParsedPage {
     favicon: $('link[rel*="icon"]').length > 0,
     mapEmbeds,
     videoEmbeds,
+    textSample: text.slice(0, 20000),
   };
 }
 

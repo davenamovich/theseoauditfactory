@@ -199,6 +199,38 @@ export function analyzeTechnical(ctx: AnalyzeContext): AnalyzerOutput {
       )
     );
 
+  // --- Header-level AI blocks (X-Robots-Tag noai / scraping-policy headers).
+  // Invisible to robots.txt audits - this is the "hidden" layer of AI blocking.
+  const xrt = (ctx.headers['x-robots-tag'] ?? '').toLowerCase();
+  const aiBlockHeaders: string[] = [];
+  if (/noai/.test(xrt)) aiBlockHeaders.push('X-Robots-Tag: noai');
+  if (/noimageai/.test(xrt)) aiBlockHeaders.push('X-Robots-Tag: noimageai');
+  if (ctx.headers['x-ai-agent-directive']) aiBlockHeaders.push('X-AI-Agent-Directive');
+  if (ctx.headers['x-scraping-policy']) aiBlockHeaders.push('X-Scraping-Policy');
+  checks.push({
+    id: 'ai-block-headers',
+    label: 'No header-level AI blocks',
+    status: aiBlockHeaders.length === 0 ? 'pass' : 'warn',
+    detail:
+      aiBlockHeaders.length === 0
+        ? 'No X-Robots-Tag noai/noimageai or scraping-policy headers detected'
+        : `Header blocks found: ${aiBlockHeaders.join('; ')}`,
+  });
+  if (aiBlockHeaders.length > 0)
+    findings.push(
+      finding(
+        'ai-block-headers',
+        'ai',
+        'medium',
+        'HTTP headers block AI reuse of your content',
+        aiBlockHeaders,
+        'These headers tell AI systems not to read or reuse your content - they apply site-wide and are invisible in robots.txt audits. If they were set deliberately (e.g. by a privacy tool or host default), fine; if not, assistants may refuse to quote your pages even when robots.txt allows them.',
+        'Remove the noai/noimageai directives from your X-Robots-Tag header (or scope them to the pages you actually want protected), then re-run this audit.',
+        'AI search visibility',
+        'quick'
+      )
+    );
+
   checks.push({
     id: 'robots-txt',
     label: 'robots.txt present',
@@ -808,6 +840,94 @@ export function analyzeAi(ctx: AnalyzeContext): AnalyzerOutput {
     status: p.ogTags.title && p.ogTags.description ? 'pass' : 'warn',
     detail: 'AI systems often reuse title/description/og text when describing your business',
   });
+
+  // --- First-hand proof signals (adapted from the First-Hand Proof KB methodology,
+  //     MIT-licensed Illyism/seo-skills) --------------------------------------
+  const t = p.textSample;
+  const proofSignals: string[] = [];
+  const firstPersonTest = /we (tested|measured|benchmarked|analyzed|audited|ran|compared)|our (tests?|benchmarks?|measurements?|data|research|study|experiments?|results?)|in (our|the) lab|hands-on/i.test(t);
+  if (firstPersonTest) proofSignals.push('first-person test language');
+  const customerOutcomes = /case stud(y|ies)|customer (results|story|stories|success)|migrated|switched to|saved \$|\$[\d,]+ (saved|cut|reduced)|reduced .{0,30}by \d+%/i.test(t);
+  if (customerOutcomes) proofSignals.push('customer outcomes / case studies');
+  const aggregateNumbers = /\b\d[\d,.]*\s*(k\+|m\+|\+)?\s*(customers|users|clients|deploys|installs|projects|sites|websites|businesses|reviews|requests|events|pages)\b/i.test(t);
+  if (aggregateNumbers) proofSignals.push('aggregate usage numbers');
+  const benchmarks = /\b\d+(\.\d+)?\s?(ms|seconds?|fps|x faster|p9[59])\b/i.test(t);
+  if (benchmarks) proofSignals.push('concrete benchmark numbers');
+  const authorAttribution = p.jsonLdTypes.includes('Person') || p.jsonLdTypes.includes('Article') || p.jsonLdTypes.includes('BlogPosting');
+  if (authorAttribution) proofSignals.push('author/attribution schema');
+
+  const proofStatus: CheckResult['status'] = proofSignals.length >= 3 ? 'pass' : proofSignals.length >= 1 ? 'warn' : p.wordCount >= 300 ? 'fail' : 'na';
+  checks.push({
+    id: 'first-hand-proof',
+    label: 'First-hand proof signals',
+    status: proofStatus,
+    detail: proofSignals.length
+      ? `Found: ${proofSignals.join(', ')}`
+      : p.wordCount >= 300
+        ? `No test language, customer outcomes, benchmark numbers or author attribution on ${p.wordCount} words of content`
+        : 'Not enough homepage text to evaluate',
+  });
+  if (proofStatus === 'fail')
+    findings.push(
+      finding(
+        'no-first-hand-proof',
+        'ai',
+        'medium',
+        'No first-hand proof on the homepage',
+        [`${p.wordCount} words of content with zero proof signals`],
+        'Pages that hold rankings and get cited by AI assistants open with concrete receipts: exact test counts, latency deltas, dollar figures, real customer outcomes. FAQ schema, fresh dates and author bios are copied by every competitor in seconds; first-hand proof is not. Pages with zero proof signals read as commodity copy to buyers and retrieval models alike.',
+        'Add one concrete, verifiable claim in the first two sentences (a test result, a customer number, a price delta with a real figure) and stack 3-4 proof types across the page: benchmarks, customer outcomes, aggregate numbers, author attribution.',
+        'Trust, conversion and AI citation likelihood',
+        'medium'
+      )
+    );
+
+  // --- AI-slop language check (adapted from the unslop-seo slop table, MIT) --
+  if (p.wordCount >= 120) {
+    const emDashCount = (t.match(/[\u2013\u2014]/g) ?? []).length;
+    const contrastFrames = (t.match(/not just .{2,40}, (?:it'?s|but) |it'?s not .{2,40}, it'?s /gi) ?? []).length;
+    const slopWords = [
+      'delve', 'pivotal', 'tapestry', 'testament', 'underscore', 'seamless', 'game-changing',
+      'revolutionary', 'cutting-edge', 'groundbreaking', 'next-generation', 'world-class',
+      'blazing-fast', 'utilize', 'leverage the', 'in today\'s fast-paced',
+    ];
+    const vocabHits = slopWords.filter((w) => new RegExp(`\\b${w.replace(/ /g, '\\s+')}\\b`, 'i').test(t));
+    const chatbotArtifacts = (t.match(/in this (article|post|guide), we|let'?s dive in|i hope this helps|as we have seen/gi) ?? []).length;
+    const strongSignals =
+      (emDashCount >= 5 ? 1 : 0) +
+      (contrastFrames >= 1 ? 1 : 0) +
+      (vocabHits.length >= 4 ? 1 : 0) +
+      (chatbotArtifacts >= 1 ? 1 : 0);
+    const slopStatus: CheckResult['status'] = strongSignals === 0 ? 'pass' : strongSignals >= 2 ? 'fail' : 'warn';
+    checks.push({
+      id: 'ai-slop-language',
+      label: 'AI-slop language tells',
+      status: slopStatus,
+      detail:
+        strongSignals === 0
+          ? 'Copy reads human: no em-dash clusters, contrast frames, slop vocabulary or chatbot artifacts'
+          : `Em/en dashes: ${emDashCount}, contrast frames: ${contrastFrames}, slop vocabulary: ${vocabHits.length ? vocabHits.slice(0, 4).join(', ') : '0'}, chatbot artifacts: ${chatbotArtifacts}`,
+    });
+    if (slopStatus === 'fail')
+      findings.push(
+        finding(
+          'ai-slop-language',
+          'content',
+          'medium',
+          'Homepage copy shows AI-generated language tells',
+          [
+            `Em/en dashes: ${emDashCount}`,
+            contrastFrames ? `Contrast frames ("not just X, but Y"): ${contrastFrames}` : null,
+            vocabHits.length ? `AI vocabulary: ${vocabHits.join(', ')}` : null,
+            chatbotArtifacts ? `Chatbot artifacts: ${chatbotArtifacts}` : null,
+          ].filter(Boolean) as string[],
+          'Buyers and editors recognize AI filler instantly and leave; answer engines also under-quote generic prose. Em-dash clusters, "not just X, but Y" frames, puffery vocabulary ("seamless", "cutting-edge", "game-changing") and chatbot artifacts ("In this article, we\'ll explore") are the most frequent LLM punctuation and wording tells.',
+          'Rewrite the flagged lines: state the fact plainly, replace puffery with numbers or mechanisms, break contrast frames, and prefer periods over em dashes. One editing pass is usually enough.',
+          'Reader trust and AI quotation quality',
+          'medium'
+        )
+      );
+  }
 
   return { key: 'ai', label: 'AI Search Readiness', checks, findings };
 }

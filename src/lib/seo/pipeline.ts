@@ -24,7 +24,8 @@ import {
 import { buildSavings, buildActionPlan, buildContentIdeas } from './savings';
 import type { AuditReport, Finding, CheckResult, CategoryKey } from './types';
 
-const ENGINE = 'SEO Audit Factory engine 1.2 (methodology adapted from claude-seo, MIT)';
+const ENGINE =
+  'SEO Audit Factory engine 1.3 (methodology adapted from claude-seo and Illyism/seo-skills: seo-roast, unslop-seo, proof-kb, block-ai-scrapers - all MIT)';
 
 // --- simple job queue with bounded concurrency ------------------------------
 const queue: string[] = [];
@@ -476,7 +477,7 @@ async function runLimitedAudit(
       : 'Page content could not be read in this run; robots-level policies were verified from real requests.';
 
     const report: AuditReport = {
-      version: '1.2',
+      version: '1.3',
       engine: ENGINE,
       generatedAt: new Date().toISOString(),
       url,
@@ -753,7 +754,7 @@ async function runAudit(auditId: string): Promise<void> {
     }
 
     const report: AuditReport = {
-      version: '1.2',
+      version: '1.3',
       engine: ENGINE,
       generatedAt: new Date().toISOString(),
       url,
