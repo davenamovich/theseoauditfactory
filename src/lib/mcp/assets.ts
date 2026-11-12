@@ -9,6 +9,7 @@ export type AssetType =
   | 'promo-meme'
   | 'carousel'
   | 'social-graphic'
+  | 'before-pitch'
   | 'stick-figure-video'
   | 'video-show'
   | 'captions-pack'
@@ -57,6 +58,15 @@ export const ASSET_TYPES: Record<AssetType, AssetTypeDef> = {
     async: false,
     creditsNote: 'P&R list price: image format. BYOK: 1 credit ($0.01) per MCP call.',
     icon: 'Image',
+  },
+  'before-pitch': {
+    label: 'Your Free /BEFORE',
+    blurb: "Joe's welcome + five custom examples built from your own website - the honest before shot.",
+    tool: 'create_before_pitch',
+    async: true,
+    jobKind: 'demo_pack',
+    creditsNote: 'Complimentary for you: one free /before per audit, covered by the operator. P&R list price: 50 credits ($0.50; BYOK $0.01).',
+    icon: 'Camera',
   },
   'stick-figure-video': {
     label: 'Stick-Figure Video',
@@ -193,6 +203,19 @@ export function planAssetCall(assetType: AssetType, ctx: BuildContext): PlannedC
         },
         async: false,
         steps: ['Composing brief from audit data', 'Calling P&R generate_ad_creative (image + all sizes)'],
+      };
+    case 'before-pitch':
+      return {
+        tool: 'create_before_pitch',
+        args: {
+          // Real /before semantics: ONE prospect, described by their website.
+          // No feed/offer flags -> the full demo_pack (Joe welcome + five
+          // custom examples, iMessage thread included), polled as demo_pack.
+          input: ctx.website.slice(0, 1500),
+        },
+        async: true,
+        jobKind: 'demo_pack',
+        steps: ['Sending your website to the P&R /before engine', "Joe records the welcome + five custom examples from your site", 'Polling demo_pack job status'],
       };
     case 'stick-figure-video':
       return {

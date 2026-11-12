@@ -51,6 +51,49 @@ export async function generateFallback(assetType: string, ctx: BuildContext): Pr
   const context = contextText(ctx);
   const brand = ctx.businessName || ctx.website;
 
+  // The free /BEFORE, built-in-engine edition: an honest "before" photo of
+  // the business grounded in what the audit actually saw, plus caption copy.
+  if (assetType === 'before-pitch') {
+    const industry = ctx.industry || 'small business';
+    const problem = ctx.report?.topProblems?.[0]?.title;
+    const visualPrompt =
+      `Amateur documentary-style smartphone photo: a slightly neglected ${industry} storefront, ` +
+      `faded paint on the sign, dated window display, a taped paper notice on the door, overcast lighting. ` +
+      `Realistic "before the renovation" mood, muted colors, honest and specific. ` +
+      (problem ? `The scene should subtly reflect this flaw: ${problem}. ` : '') +
+      `Square composition, no text, no letters, no words, no logos in the image.`;
+    const image = await zai.images.generations.create({ prompt: visualPrompt, size: '1024x1024' });
+    const base64 = image.data?.[0]?.base64;
+    if (!base64) throw new Error('Image generation returned no data');
+
+    const copy = await zai.chat.completions.create({
+      messages: [
+        {
+          role: 'assistant',
+          content:
+            'You write the honest "BEFORE" half of a before/after joke. Return JSON only: ' +
+            '{"caption": "one short caption under 12 words that names the before state of this website, warm and funny, no emojis", ' +
+            '"postCopy": "2-3 sentences: admit the before honestly, then say the after (fresh content, memes, videos from the same site) is one free click away"}. ' +
+            'No markdown fences. ' +
+            ANTI_HALLUCINATION,
+        },
+        { role: 'user', content: `${context}\n\nWrite the BEFORE caption and post copy.` },
+      ],
+      thinking: { type: 'disabled' },
+    });
+    let caption = '';
+    let postCopy = '';
+    try {
+      const parsed = JSON.parse(copy.choices[0]?.message?.content?.replace(/```json|```/g, '').trim() ?? '{}');
+      caption = parsed.caption ?? '';
+      postCopy = parsed.postCopy ?? '';
+    } catch {
+      caption = 'The before. We all have one.';
+      postCopy = copy.choices[0]?.message?.content ?? '';
+    }
+    return { kind: 'image', base64, mime: 'image/png', caption, postCopy };
+  }
+
   if (IMAGE_TYPES.has(assetType)) {
     const visualPrompt = `Bold promotional social media graphic for a ${ctx.industry || 'local'} business called ${brand}. Clean flat vector style, high contrast, teal and amber accent colors on dark charcoal background, no text, no letters, no words in the image, modern minimal composition, high quality`;
     const image = await zai.images.generations.create({ prompt: visualPrompt, size: '1024x1024' });

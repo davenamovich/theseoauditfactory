@@ -14,6 +14,7 @@ export type Route =
   | { view: 'article'; slug: string }
   | { view: 'glossary' }
   | { view: 'resources' }
+  | { view: 'offers' }
   | { view: 'about' }
   | { view: 'admin' };
 
@@ -34,6 +35,8 @@ export function parseHash(hash: string): Route {
       return { view: 'glossary' };
     case 'resources':
       return { view: 'resources' };
+    case 'offers':
+      return { view: 'offers' };
     case 'about':
       return { view: 'about' };
     case 'admin':

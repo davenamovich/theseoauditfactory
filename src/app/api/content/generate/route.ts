@@ -57,18 +57,37 @@ export async function POST(req: NextRequest) {
     };
   }
 
-  // Free sample allowance (configurable in the admin dashboard).
+  // Free sample allowances (configurable in the admin dashboard).
+  // The /BEFORE is its own complimentary hook: one per audit, separate from
+  // the regular free content samples.
   if (auditRow) {
-    const used = await db.contentJob.count({ where: { auditId: auditRow.id, status: { not: 'failed' } } });
-    if (used >= settings.freeContentPerAudit) {
-      return NextResponse.json(
-        {
-          error: `Free sample allowance reached (${settings.freeContentPerAudit} per audit, set by the operator). Head to Plunder & Riffle for unlimited content creation.`,
-          allowanceReached: true,
-          exploreUrl: 'https://www.plunderandriffle.com/whop',
-        },
-        { status: 402 }
-      );
+    if (assetType === 'before-pitch') {
+      const used = await db.contentJob.count({
+        where: { auditId: auditRow.id, assetType: 'before-pitch', status: { not: 'failed' } },
+      });
+      // `|| 1` guards against a stale settings cache that predates this key.
+      if (used >= Math.max(1, Number(settings.freeBeforePerAudit) || 1)) {
+        return NextResponse.json(
+          {
+            error: 'The free /BEFORE was already generated for this site - one per audit. Unlimited before-pitches live at Plunder & Riffle.',
+            allowanceReached: true,
+            exploreUrl: 'https://www.plunderandriffle.com/whop',
+          },
+          { status: 402 }
+        );
+      }
+    } else {
+      const used = await db.contentJob.count({ where: { auditId: auditRow.id, status: { not: 'failed' } } });
+      if (used >= settings.freeContentPerAudit) {
+        return NextResponse.json(
+          {
+            error: `Free sample allowance reached (${settings.freeContentPerAudit} per audit, set by the operator). Head to Plunder & Riffle for unlimited content creation.`,
+            allowanceReached: true,
+            exploreUrl: 'https://www.plunderandriffle.com/whop',
+          },
+          { status: 402 }
+        );
+      }
     }
   } else {
     const since = new Date(Date.now() - 24 * 3600 * 1000);
@@ -98,34 +117,9 @@ export async function POST(req: NextRequest) {
   try {
     // No key configured: use the clearly-labeled built-in fallback if enabled.
     if (!key) {
-      if (!settings.mcpFallbackEnabled) {
-        await db.contentJob.update({
-          where: { id: job.id },
-          data: { status: 'failed', error: 'P&R MCP API key is not configured and fallback generation is disabled.' },
-        });
-        return NextResponse.json(
-          { jobId: job.id, status: 'failed', error: 'P&R MCP API key is not configured. Operators can set it in the admin dashboard.' },
-          { status: 503 }
-        );
-      }
-      const result = await generateFallback(assetType, ctx);
-      const updated = await db.contentJob.update({
-        where: { id: job.id },
-        data: {
-          status: 'completed',
-          provider: 'built-in-fallback',
-          toolName: 'built-in-ai-engine',
-          creditsNote: 'Generated with the built-in AI engine because no P&R MCP API key is configured.',
-          result: result as unknown as object,
-          completedAt: new Date(),
-        },
-      });
-      return NextResponse.json({
-        jobId: updated.id,
-        status: updated.status,
-        provider: updated.provider,
-        note: 'Generated with the built-in AI engine. Connect a P&R MCP API key in admin settings to route generation through Plunder & Riffle.',
-      });
+      return await runFallback(
+        'Generated with the built-in AI engine because no P&R MCP API key is configured. Operators can set one in the admin dashboard to route generation through Plunder & Riffle.'
+      );
     }
 
     // Real P&R MCP path.
@@ -148,14 +142,10 @@ export async function POST(req: NextRequest) {
     const planned = planAssetCall(assetType, ctx);
     if (planned.async) {
       const res = await callTool(planned.tool, planned.args, 150_000);
-      const creative = extractCreative(res.data, res.text);
       if (!res.ok) {
-        await db.contentJob.update({
-          where: { id: job.id },
-          data: { status: 'failed', toolName: planned.tool, error: res.text.slice(0, 500) || 'MCP call failed', completedAt: new Date() },
-        });
-        return NextResponse.json({ jobId: job.id, status: 'failed', error: res.text.slice(0, 500) }, { status: 502 });
+        return await runFallback(pnrFailedNote(res.text));
       }
+      const creative = extractCreative(res.data, res.text);
       const jobId = creative.jobId;
       const kind = planned.jobKind ?? creative.jobKind;
       if (jobId && kind) {
@@ -177,21 +167,55 @@ export async function POST(req: NextRequest) {
     const res = await callTool(planned.tool, planned.args, 150_000);
     return finish(res, planned.tool);
   } catch (err) {
+    // Even an unexpected throw must not dead-end the user: try the labeled
+    // built-in engine before surfacing any error.
     const message = err instanceof Error ? err.message : 'Generation failed';
-    await db.contentJob
-      .update({ where: { id: job.id }, data: { status: 'failed', error: message.slice(0, 500), completedAt: new Date() } })
-      .catch(() => undefined);
-    return NextResponse.json({ jobId: job.id, status: 'failed', error: message }, { status: 500 });
+    try {
+      return await runFallback(pnrFailedNote(message));
+    } catch (fallbackErr) {
+      const fbMsg = fallbackErr instanceof Error ? fallbackErr.message : 'Fallback generation failed';
+      await db.contentJob
+        .update({
+          where: { id: job.id },
+          data: { status: 'failed', error: `${message.slice(0, 240)} | fallback: ${fbMsg.slice(0, 240)}`.slice(0, 500), completedAt: new Date() },
+        })
+        .catch(() => undefined);
+      return NextResponse.json({ jobId: job.id, status: 'failed', error: message }, { status: 500 });
+    }
+  }
+
+  function pnrFailedNote(detail: string | undefined): string {
+    return `P&R MCP call failed (${(detail || 'unknown error').slice(0, 160)}) - the built-in AI engine generated this instead.`;
+  }
+
+  async function runFallback(note: string) {
+    if (!settings.mcpFallbackEnabled) {
+      await db.contentJob
+        .update({ where: { id: job.id }, data: { status: 'failed', error: note.slice(0, 500), completedAt: new Date() } })
+        .catch(() => undefined);
+      return NextResponse.json({ jobId: job.id, status: 'failed', error: note }, { status: 503 });
+    }
+    const result = await generateFallback(assetType, ctx);
+    const updated = await db.contentJob.update({
+      where: { id: job.id },
+      data: {
+        status: 'completed',
+        provider: 'built-in-fallback',
+        toolName: 'built-in-ai-engine',
+        creditsNote: note,
+        result: result as unknown as object,
+        completedAt: new Date(),
+      },
+    });
+    return NextResponse.json({ jobId: updated.id, status: updated.status, provider: updated.provider, note });
   }
 
   async function finish(res: Awaited<ReturnType<typeof callTool>>, toolName: string) {
     const creative = extractCreative(res.data, res.text);
     if (!res.ok) {
-      await db.contentJob.update({
-        where: { id: job.id },
-        data: { status: 'failed', toolName, error: res.text.slice(0, 500) || 'MCP call failed', completedAt: new Date() },
-      });
-      return NextResponse.json({ jobId: job.id, status: 'failed', error: res.text.slice(0, 500) }, { status: 502 });
+      // P&R rejected the call (auth, quota, tool error): degrade to the
+      // clearly-labeled built-in engine instead of dead-ending the user.
+      return runFallback(pnrFailedNote(res.text));
     }
     const updated = await db.contentJob.update({
       where: { id: job.id },

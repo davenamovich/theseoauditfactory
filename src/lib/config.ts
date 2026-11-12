@@ -3,6 +3,7 @@ import { db } from '@/lib/db';
 
 export interface AppSettings {
   freeContentPerAudit: number;
+  freeBeforePerAudit: number;
   maxAuditsPerIpPerDay: number;
   auditConcurrency: number;
   cacheTtlMinutes: number;
@@ -11,7 +12,8 @@ export interface AppSettings {
 
 const DEFAULTS: AppSettings = {
   freeContentPerAudit: 3,
-  maxAuditsPerIpPerDay: 15,
+  freeBeforePerAudit: 1,
+  maxAuditsPerIpPerDay: 50,
   auditConcurrency: 2,
   cacheTtlMinutes: 720,
   mcpFallbackEnabled: true,

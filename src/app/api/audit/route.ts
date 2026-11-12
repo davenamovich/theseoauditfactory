@@ -32,21 +32,11 @@ export async function POST(req: NextRequest) {
     const settings = await getSettings();
     setConcurrency(settings.auditConcurrency);
 
-    const ipHash = clientIpHash(req);
-    const since = new Date(Date.now() - 24 * 3600 * 1000);
-    const todayCount = await db.audit.count({ where: { ipHash, createdAt: { gte: since } } }).catch(() => 0);
-    if (todayCount >= settings.maxAuditsPerIpPerDay) {
-      return NextResponse.json(
-        { error: `Daily audit limit reached (${settings.maxAuditsPerIpPerDay} per day). Try again tomorrow.` },
-        { status: 429 }
-      );
-    }
-
-    // Cache: a recently completed audit for the same host within the TTL window is reused.
-    // force=true (RE-RUN button) skips the cache so progress can be re-measured;
-    // the per-IP daily limit still applies.
+    // Cache FIRST: if we recently completed this site, always serve it - even
+    // when the daily quota is used up. A repeat visit must never dead-end.
     const force = Boolean(body.force);
     const ttlMs = force ? 0 : settings.cacheTtlMinutes * 60_000;
+    const ipHash = clientIpHash(req);
     if (ttlMs > 0) {
       const cached = await db.audit.findFirst({
         where: { host, status: 'completed', completedAt: { gte: new Date(Date.now() - ttlMs) } },
@@ -60,6 +50,20 @@ export async function POST(req: NextRequest) {
           note: 'We served a recent audit of this site. Re-run later for a fresh crawl.',
         });
       }
+    }
+
+    // Daily quota (per IP): applies to brand-new audits only, and the copy
+    // stays friendly - reports already generated remain viewable.
+    const since = new Date(Date.now() - 24 * 3600 * 1000);
+    const todayCount = await db.audit.count({ where: { ipHash, createdAt: { gte: since } } }).catch(() => 0);
+    if (todayCount >= settings.maxAuditsPerIpPerDay) {
+      return NextResponse.json(
+        {
+          error: `You have used all ${settings.maxAuditsPerIpPerDay} free audits for today. Reports you already ran are still available, and fresh audits unlock again tomorrow.`,
+          quotaReached: true,
+        },
+        { status: 429 }
+      );
     }
 
     const audit = await db.audit.create({

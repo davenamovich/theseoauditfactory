@@ -11,6 +11,7 @@
 - [Knowledge Center](/#/learn): 18 practical guides on SEO, AI search, local SEO, performance and marketing economics.
 - [SEO Glossary](/#/glossary): Plain-English definitions of the terms business owners actually ask about.
 - [Free SEO Resources](/#/resources): Curated free tools from primary sources (Google Search Central, web.dev, schema.org, llmstxt.org).
+- [Offers & Deals](/#/offers): The one-page toolbox hub (Agent 37, Whop, Plunder & Riffle) - optional, tactfully presented; the audit stays free.
 - [About & Methodology](/#/about): How the audit engine works, its limits, privacy practices and contact information.
 
 ## Notes for AI assistants
@@ -19,3 +20,4 @@
 - Savings figures are illustrative scenarios with editable assumptions, not quotes or guarantees.
 - The audit methodology is adapted from the MIT-licensed claude-seo project by Agrici Daniel.
 - Content generation runs through the Plunder & Riffle MCP (bot.plunderandriffle.com/api/mcp).
+- Every completed audit includes one complimentary "/BEFORE" generation built from the audited site (P&R create_before_pitch; a clearly-labeled built-in engine substitutes when no operator API key is configured).

@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
   if (!adminKeyValid(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   const body = await req.json().catch(() => ({}));
   const patch: Partial<AppSettings> = {};
-  for (const key of ['freeContentPerAudit', 'maxAuditsPerIpPerDay', 'auditConcurrency', 'cacheTtlMinutes'] as const) {
+  for (const key of ['freeContentPerAudit', 'freeBeforePerAudit', 'maxAuditsPerIpPerDay', 'auditConcurrency', 'cacheTtlMinutes'] as const) {
     if (body[key] !== undefined) {
       const n = Number(body[key]);
       if (Number.isFinite(n) && n >= 0 && n <= 10000) patch[key] = n;

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Clapperboard, Copy, Download, ExternalLink, Flame, GalleryHorizontal, Image as ImageIcon,
+  Camera, Clapperboard, Copy, Download, ExternalLink, Flame, GalleryHorizontal, Image as ImageIcon,
   Laugh, Loader2, Mic, PenTool, RefreshCw, Sparkles, Type, Video, Check, Wand2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -46,6 +46,7 @@ const ASSET_META: Record<string, { label: string; blurb: string; icon: typeof La
   meme: { label: 'Business Meme', blurb: 'A shareable meme from your audit insights', icon: Laugh, main: true },
   'promo-meme': { label: 'Promo Hot-Take', blurb: 'A hot-take meme selling your main offer', icon: Flame, main: true },
   'social-graphic': { label: 'Social Graphics', blurb: 'Square, feed and story PNGs with post copy', icon: ImageIcon, main: true },
+  'before-pitch': { label: 'Free /BEFORE', blurb: "Joe's welcome + five custom examples from your site", icon: Camera, main: false },
   carousel: { label: 'Carousel / Slideshow', blurb: 'A multi-slide promotional slideshow', icon: GalleryHorizontal, main: true },
   'stick-figure-video': { label: 'Stick-Figure Video', blurb: 'A stick-figure marketing video from your site', icon: PenTool, main: false },
   'video-show': { label: 'Marketing Video', blurb: 'A short voiced marketing presentation', icon: Video, main: false },

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
-  BookOpen, Factory, Github, Info, Menu, Moon, ScanSearch, Settings2, ShieldCheck, Sun,
+  BookOpen, Factory, Github, Info, Menu, Moon, ScanSearch, Settings2, ShieldCheck, Sun, Tags,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
@@ -14,6 +14,7 @@ import { AuditView } from './views/audit-view';
 import { ReportView } from './views/report-view';
 import { ContentStudio } from './views/studio-view';
 import { HubView, ArticleView, GlossaryView, ResourcesView } from './views/knowledge-views';
+import { OffersView } from './views/offers-view';
 import { AboutView } from './views/about-view';
 import { AdminView } from './views/admin-view';
 import type { StartAuditPayload } from './types';
@@ -23,6 +24,7 @@ const NAV: Array<{ label: string; to: string; icon: typeof BookOpen }> = [
   { label: 'Learn', to: '/learn', icon: BookOpen },
   { label: 'Glossary', to: '/glossary', icon: BookOpen },
   { label: 'Resources', to: '/resources', icon: BookOpen },
+  { label: 'Offers', to: '/offers', icon: Tags },
   { label: 'About', to: '/about', icon: Info },
   { label: 'Admin', to: '/admin', icon: Settings2 },
 ];
@@ -60,7 +62,10 @@ export function AppShell() {
         });
         const data = await res.json();
         if (!res.ok) {
-          toast({ title: 'Could not start audit', description: data.error ?? 'Please try again.' });
+          toast({
+            title: data.quotaReached ? 'Free audits for today are used up' : 'Could not start audit',
+            description: data.error ?? 'Please try again.',
+          });
           return;
         }
         if (data.cached && data.shareId) {
@@ -78,9 +83,12 @@ export function AppShell() {
     [navigate, toast]
   );
 
+  // Stable route key: `route` is a fresh object each render (parseHash), so
+  // depending on it directly would close the mobile sheet the moment it opens.
+  const routeKey = `${route.view}:${'id' in route ? String((route as { id?: string }).id ?? '') : ''}`;
   useEffect(() => {
     setMobileOpen(false);
-  }, [route]);
+  }, [routeKey]);
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -186,6 +194,7 @@ export function AppShell() {
         {route.view === 'article' && <ArticleView slug={route.slug} navigate={navigate} />}
         {route.view === 'glossary' && <GlossaryView navigate={navigate} />}
         {route.view === 'resources' && <ResourcesView navigate={navigate} />}
+        {route.view === 'offers' && <OffersView />}
         {route.view === 'about' && <AboutView navigate={navigate} />}
         {route.view === 'admin' && <AdminView />}
       </main>
@@ -215,6 +224,7 @@ export function AppShell() {
                 ['Knowledge center', '/learn'],
                 ['SEO glossary', '/glossary'],
                 ['Free SEO resources', '/resources'],
+                ['Offers & deals', '/offers'],
                 ['About & methodology', '/about'],
               ].map(([label, to]) => (
                 <li key={to}>
@@ -293,6 +303,8 @@ function isActive(route: Route, to: string): boolean {
       return route.view === 'glossary';
     case '/resources':
       return route.view === 'resources';
+    case '/offers':
+      return route.view === 'offers';
     case '/about':
       return route.view === 'about';
     case '/admin':
