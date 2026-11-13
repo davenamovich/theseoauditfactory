@@ -11,6 +11,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PhoneFrame, PhoneScreenShell } from '../phone-frame';
 import { PhoneThread, type PhoneThreadMessage } from '../phone-thread';
+import { ShowcasePhone } from '../showcase-phone';
+import { Clapperboard, MessagesSquare } from 'lucide-react';
 
 function track(kind: string, meta: Record<string, unknown>): void {
   fetch('/api/track', {
@@ -94,6 +96,27 @@ function readSavedBefore(): SavedBefore | null {
   }
 }
 
+/** The canned demo conversation, reused as the showcase's never-blank fallback. */
+function SampleThreadBubbles() {
+  return (
+    <div className="flex flex-col gap-1.5 pt-1">
+      {THREAD.map((m, i) => (
+        <div key={i} className={m.from === 'me' ? 'self-end' : 'self-start'} style={{ maxWidth: '85%' }}>
+          <div
+            className={
+              m.from === 'me'
+                ? 'rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-3 py-1.5 text-[11px] font-medium leading-snug'
+                : 'rounded-2xl rounded-bl-sm bg-zinc-800 text-zinc-100 px-3 py-1.5 text-[11px] font-medium leading-snug'
+            }
+          >
+            {m.text}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function OffersView() {
   // Reads localStorage lazily. This view only mounts after hash navigation
   // (post-hydration), so a lazy initializer is hydration-safe and needs no effect.
@@ -172,21 +195,7 @@ export function OffersView() {
             <>
               <PhoneFrame>
                 <PhoneScreenShell title="Messages · the honest thread">
-                  <div className="flex flex-col gap-1.5 pt-1">
-                    {THREAD.map((m, i) => (
-                      <div key={i} className={m.from === 'me' ? 'self-end' : 'self-start'} style={{ maxWidth: '85%' }}>
-                        <div
-                          className={
-                            m.from === 'me'
-                              ? 'rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-3 py-1.5 text-[11px] font-medium leading-snug'
-                              : 'rounded-2xl rounded-bl-sm bg-zinc-800 text-zinc-100 px-3 py-1.5 text-[11px] font-medium leading-snug'
-                          }
-                        >
-                          {m.text}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  <SampleThreadBubbles />
                 </PhoneScreenShell>
               </PhoneFrame>
               <p className="mt-2 text-center text-[11px] text-muted-foreground flex items-center justify-center gap-1.5">
@@ -226,6 +235,55 @@ export function OffersView() {
           </div>
         </div>
       </div>
+
+      {/* Live showcase: real P&R wall creations streaming in the beveled iPhone.
+          Adapted from the P&R bot-phone-showcase skill (feed + iframe loop). */}
+      <section aria-label="Live showcase of recent Plunder and Riffle creations" className="mt-14">
+        <div className="max-w-2xl">
+          <div className="inline-flex items-center gap-2 rounded-full border border-secondary/40 bg-secondary/10 px-3 py-1 text-[11px] font-bold tracking-widest text-secondary uppercase">
+            <Clapperboard className="h-3.5 w-3.5" /> Live, not mockups
+          </div>
+          <h2 className="mt-3 text-2xl sm:text-3xl font-black tracking-tight leading-tight">
+            LIVE FROM THE <span className="text-secondary">FACTORY WALL</span>
+          </h2>
+          <p className="mt-2.5 text-sm text-muted-foreground leading-relaxed">
+            The phone below is not a screenshot - it streams the freshest pages published on the
+            Plunder &amp; Riffle wall, auto-advancing every few seconds and re-fetching the feed every
+            minute. Whatever the engine just shipped appears here first. The same engine that built
+            your free /BEFORE.
+          </p>
+        </div>
+
+        <div className="mt-6 grid gap-10 lg:grid-cols-[auto_1fr] items-center">
+          <div className="mx-auto lg:mx-0">
+            <ShowcasePhone fallback={<SampleThreadBubbles />} />
+          </div>
+          <div>
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-border/60 bg-card/70 card-sheen p-4">
+                <MessagesSquare className="h-4 w-4 text-primary" aria-hidden />
+                <p className="mt-2 text-sm font-bold">Everything on rotation</p>
+                <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                  The wall serves the newest pages in whatever format shipped last - audio scripts,
+                  memes, iMessage ads, carousels. Tap a dot to jump to a page yourself.
+                </p>
+              </div>
+              <div className="rounded-xl border border-border/60 bg-card/70 card-sheen p-4">
+                <Factory className="h-4 w-4 text-primary" aria-hidden />
+                <p className="mt-2 text-sm font-bold">Proof the engine is real</p>
+                <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                  Every page you see was generated and published by a live bot through the P&amp;R MCP -
+                  no stock images, no lorem ipsum.
+                </p>
+              </div>
+            </div>
+            <p className="mt-4 text-xs text-muted-foreground leading-relaxed">
+              If the wall is ever quiet or offline, the phone shows a clearly-labeled sample instead of
+              going blank - the same honesty policy as everything else on this page.
+            </p>
+          </div>
+        </div>
+      </section>
 
       {/* Honest footer */}
       <div className="mt-14 rounded-xl border border-border/60 bg-background/30 p-5 flex flex-col sm:flex-row items-start sm:items-center gap-3">
