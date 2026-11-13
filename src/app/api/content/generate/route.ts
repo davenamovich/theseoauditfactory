@@ -163,7 +163,9 @@ export async function POST(req: NextRequest) {
               offerUrl: creative.offerUrl ?? (planned.tool === 'create_funnel' ? ctx.website : undefined),
               // Lets the poller answer a needs-description pause from the audit
               // instead of dead-ending (create_funnel never invents a page).
-              ...(planned.tool === 'create_funnel' ? { funnelDescription: funnelDescription(ctx) } : {}),
+              ...(planned.tool === 'create_funnel'
+                ? { funnelDescription: funnelDescription(ctx), funnelFormat: planned.args.format }
+                : {}),
             } as object,
           },
         });

@@ -357,6 +357,7 @@ function collectFrom(obj: unknown, out: CreativeResult, depth = 0): void {
       else if (lower === 'headline' && !out.headline) out.headline = value;
       else if (lower === 'referralurl' && !out.referralUrl) out.referralUrl = value;
       else if (lower === 'shareurl' && !out.shareUrl) out.shareUrl = value;
+      else if (lower === 'offerurl' && !out.offerUrl) out.offerUrl = value;
       else if (lower === 'mp4pageurl' && !out.mp4PageUrl) out.mp4PageUrl = value;
       else if (lower === 'mp4url' && !out.mp4Url) out.mp4Url = value;
       else if (lower === 'funnelid' && !out.funnelId) {
@@ -368,9 +369,12 @@ function collectFrom(obj: unknown, out: CreativeResult, depth = 0): void {
         out.mediaUrls.push(value);
       }
     } else if (value !== null && typeof value === 'object') {
-      if (lower === 'offer' && !out.offerUrl) {
+      if (lower === 'offer' || lower === 'rebuild') {
+        // The offer is the customer's own page (its OG image is not a creative);
+        // rebuild just echoes our request. Read the link, never collect media.
         const u = (value as Record<string, unknown>).url;
-        if (typeof u === 'string') out.offerUrl = u;
+        if (lower === 'offer' && typeof u === 'string' && !out.offerUrl) out.offerUrl = u;
+        continue;
       }
       if (lower === 'adassets' || lower === 'assets' || lower === 'creatives') {
         collectFrom(value, out, depth + 1);

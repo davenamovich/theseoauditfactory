@@ -98,9 +98,20 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     return fail(`P&R needs more input to continue (${creative.status ?? 'needs_input'}). ${res.text.slice(0, 300)}`);
   }
 
+  // Funnels report each format separately (formats.<name>.status: working ->
+  // done | failed). Verified live: once the offer is read the job says
+  // phase "done", terminal true, with formats still {} - so the format we
+  // asked for decides, not the top-level phase.
+  const requested = typeof result.funnelFormat === 'string' ? result.funnelFormat : null;
+  const formatStates = kind === 'funnel' ? funnelFormatStates(res.data, requested) : [];
+  const formatWorking = formatStates.some((st) => st !== 'done' && st !== 'failed');
+  const formatAllFailed = formatStates.length > 0 && formatStates.every((st) => st === 'failed');
+
   // Prefer the explicit lifecycle; fall back to output sniffing for older servers.
-  const done = phase ? phase === 'done' : hasOutput;
-  const failed = phase ? phase === 'failed' : /"?(status|phase)"?\s*[:=]\s*"?(failed|error)/i.test(res.text) && !hasOutput;
+  const done = !formatWorking && !formatAllFailed && (phase ? phase === 'done' : hasOutput);
+  const failed =
+    formatAllFailed ||
+    (phase ? phase === 'failed' : /"?(status|phase)"?\s*[:=]\s*"?(failed|error)/i.test(res.text) && !hasOutput);
 
   if (done) {
     const updated = await db.contentJob.update({
@@ -113,6 +124,23 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   }
   if (failed) return fail(`${res.text.slice(0, 400)} (P&R refunds failed jobs.)`);
   return stillRunning();
+}
+
+function funnelFormatStates(data: unknown, requested: string | null): string[] {
+  if (!data || typeof data !== 'object') return requested ? ['working'] : [];
+  const formats = (data as Record<string, unknown>).formats;
+  const map = formats && typeof formats === 'object' ? (formats as Record<string, unknown>) : {};
+  if (requested) {
+    // Not registered yet = still to come.
+    const f = map[requested];
+    const st = f && typeof f === 'object' ? (f as Record<string, unknown>).status : undefined;
+    return [typeof st === 'string' ? st.toLowerCase() : 'working'];
+  }
+  return Object.values(map).map((f) =>
+    f && typeof f === 'object' && typeof (f as Record<string, unknown>).status === 'string'
+      ? String((f as Record<string, unknown>).status).toLowerCase()
+      : 'working'
+  );
 }
 
 function serialize(
