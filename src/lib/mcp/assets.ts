@@ -13,6 +13,7 @@ export type AssetType =
   | 'stick-figure-video'
   | 'video-show'
   | 'captions-pack'
+  | 'audit-funnel'
   | 'repurpose-pack'
   | 'site-roast';
 
@@ -95,6 +96,15 @@ export const ASSET_TYPES: Record<AssetType, AssetTypeDef> = {
     creditsNote: 'P&R list price: 10 credits to read + 25 for captions (BYOK: $0.01/call).',
     icon: 'Type',
   },
+  'audit-funnel': {
+    label: 'Audit-to-Funnel Day Pack',
+    blurb: 'Your audit becomes a funnel: a full day of content (2 memes, an iMessage, a slideshow, a ranked list) on one share page whose CTA is your site.',
+    tool: 'create_funnel',
+    async: true,
+    jobKind: 'funnel',
+    creditsNote: 'P&R list price: 10 credits to read + 60 for bestof (BYOK: $0.01/call). Refunded on failure.',
+    icon: 'Filter',
+  },
   'repurpose-pack': {
     label: 'Website-to-Social Repurpose',
     blurb: 'Researches your brand voice, then generates a creative in that voice.',
@@ -139,6 +149,42 @@ function briefContext(ctx: BuildContext): string {
   }
   if (ctx.topic) parts.push(`Requested focus: ${ctx.topic}`);
   return parts.join('\n');
+}
+
+/**
+ * What the offer is and who it is for, assembled only from what the crawl saw.
+ * create_funnel reads the page itself and uses this only when the page is
+ * unreadable (status needs-description), so it is safe to send up front.
+ */
+export function funnelDescription(ctx: BuildContext): string {
+  const r = ctx.report;
+  const brand = ctx.businessName || r?.businessName || ctx.website;
+  const what = r?.homeDescription || r?.homeH1 || r?.homeTitle || '';
+  const parts = [`${brand}${ctx.industry ? ` - ${ctx.industry}` : ''}${ctx.location ? ` serving ${ctx.location}` : ''}.`];
+  if (what) parts.push(what.slice(0, 300));
+  parts.push(`Website: ${ctx.website}`);
+  return parts.join(' ');
+}
+
+/** Real create_funnel arguments, with the audit mapped onto its own fields. */
+function funnelArgs(ctx: BuildContext, format: string, tone: string): Record<string, unknown> {
+  const r = ctx.report;
+  const brand = ctx.businessName || r?.businessName || ctx.website;
+  const args: Record<string, unknown> = {
+    url: ctx.website,
+    format,
+    context: briefContext(ctx),
+    description: funnelDescription(ctx),
+    audience: ctx.industry ? `${ctx.industry} customers${ctx.location ? ` in ${ctx.location}` : ''}` : 'local customers',
+    tone,
+    cta: `Visit ${brand}`.slice(0, 40),
+  };
+  const angle = ctx.topic || r?.contentIdeas?.[0];
+  if (angle) args.angle = angle.slice(0, 200);
+  // The measured top problem is the honest objection the content answers.
+  const objection = r?.topProblems?.[0];
+  if (objection) args.objection = `${objection.title}${objection.impact ? ` - ${objection.impact}` : ''}`.slice(0, 240);
+  return args;
 }
 
 export interface PlannedCall {
@@ -220,13 +266,7 @@ export function planAssetCall(assetType: AssetType, ctx: BuildContext): PlannedC
     case 'stick-figure-video':
       return {
         tool: 'create_funnel',
-        args: {
-          url: ctx.website,
-          format: 'stickfigures',
-          description: context,
-          audience,
-          tone: 'playful but credible',
-        },
+        args: funnelArgs(ctx, 'stickfigures', 'playful but credible'),
         async: true,
         jobKind: 'funnel',
         steps: ['Reading your website via P&R funnel', 'Generating stick-figure story', 'Polling job status'],
@@ -248,16 +288,23 @@ export function planAssetCall(assetType: AssetType, ctx: BuildContext): PlannedC
     case 'captions-pack':
       return {
         tool: 'create_funnel',
-        args: {
-          url: ctx.website,
-          format: 'captions',
-          description: context,
-          audience,
-          tone: 'friendly, direct',
-        },
+        args: funnelArgs(ctx, 'captions', 'friendly, direct'),
         async: true,
         jobKind: 'funnel',
         steps: ['Reading your website via P&R funnel', 'Writing caption pack', 'Polling job status'],
+      };
+    case 'audit-funnel':
+      return {
+        tool: 'create_funnel',
+        args: funnelArgs(ctx, 'bestof', 'honest, punchy, helpful'),
+        async: true,
+        jobKind: 'funnel',
+        steps: [
+          'Reading your website via P&R funnel',
+          'Turning the audit findings into a day of content',
+          'Publishing the day-pack share page',
+          'Polling funnel job status',
+        ],
       };
     case 'repurpose-pack':
       return {

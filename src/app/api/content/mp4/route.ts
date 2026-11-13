@@ -18,7 +18,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No completed P&R preview found for this job.' }, { status: 404 });
   }
   const result = (job.result ?? {}) as Record<string, unknown>;
-  const pageUrl = typeof result.pageUrl === 'string' ? result.pageUrl : null;
+  // Funnels name their MP4 source explicitly (mp4PageUrl). dayPack.shareUrl is a
+  // carousel bundle and must never be sent to request_mp4.
+  const pageUrl =
+    typeof result.mp4PageUrl === 'string'
+      ? result.mp4PageUrl
+      : typeof result.pageUrl === 'string' && result.pageUrl !== result.shareUrl
+        ? result.pageUrl
+        : null;
   if (!pageUrl) return NextResponse.json({ error: 'This job has no preview page to render.' }, { status: 400 });
 
   const key = await resolvePnrApiKey();
@@ -50,7 +57,7 @@ export async function GET(req: NextRequest) {
   setMcpApiKey(key);
   const res = await callTool('get_job_status', { kind: 'mp4', jobId: mp4JobId }, 45_000);
   const creative = extractCreative(res.data, res.text);
-  const mp4Url = creative.mediaUrls.find((u) => /\.mp4(\?|$)/i.test(u)) ?? (res.text.match(/https?:\/\/\S+\.mp4/i)?.[0] ?? null);
+  const mp4Url = creative.mp4Url ?? creative.mediaUrls.find((u) => /\.mp4(\?|$)/i.test(u)) ?? (res.text.match(/https?:\/\/\S+\.mp4/i)?.[0] ?? null);
   if (mp4Url) {
     const merged = { ...result, mp4Url, mp4Status: 'done' };
     await db.contentJob.update({ where: { id: job.id }, data: { result: merged as object } });

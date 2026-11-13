@@ -191,6 +191,8 @@ export async function generateFallback(assetType: string, ctx: BuildContext): Pr
       'Write a short comedy roast script (5 beats) about this business website based on the details given. Keep it good-natured and end with one genuine compliment and one fix suggestion.',
     'stick-figure-video':
       'Write a stick-figure marketing video storyboard: 5 scenes, each with a visual description and one spoken line. Plain text, one scene per paragraph.',
+    'audit-funnel':
+      'Write a one-day content funnel that sends readers to this website, built from the audit details given: 2 meme captions, a short iMessage exchange (6 lines, labelled Friend:/Owner:), a 5-slide slideshow outline, and a ranked top-5 list. Every piece ends with the same call to action pointing to the website. Plain text with a short heading per piece.',
     'video-show':
       'Write a 30-second marketing video script for this business: hook, 3 value beats, call to action. Plain text.',
   };

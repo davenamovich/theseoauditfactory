@@ -4,7 +4,7 @@ import { db } from '@/lib/db';
 import { getSettings } from '@/lib/config';
 import { resolvePnrApiKey } from '@/lib/credentials';
 import { callTool, extractCreative, setMcpApiKey } from '@/lib/mcp/client';
-import { ASSET_TYPES, planAssetCall, type AssetType, type BuildContext } from '@/lib/mcp/assets';
+import { ASSET_TYPES, funnelDescription, planAssetCall, type AssetType, type BuildContext } from '@/lib/mcp/assets';
 import { generateFallback } from '@/lib/mcp/fallback';
 import type { AuditReport } from '@/lib/seo/types';
 
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
 
   // Resolve context: completed audit preferred; standalone website allowed.
   let ctx: BuildContext;
-  let auditRow = null;
+  let auditRow: Awaited<ReturnType<typeof db.audit.findFirst>> = null;
   if (auditId) {
     auditRow = await db.audit.findFirst({ where: { OR: [{ id: auditId }, { shareId: auditId }] } });
     if (!auditRow) return NextResponse.json({ error: 'Audit not found.' }, { status: 404 });
@@ -146,8 +146,9 @@ export async function POST(req: NextRequest) {
         return await runFallback(pnrFailedNote(res.text));
       }
       const creative = extractCreative(res.data, res.text);
-      const jobId = creative.jobId;
       const kind = planned.jobKind ?? creative.jobKind;
+      // Funnels are polled by funnelId (get_job_status kind funnel, jobId = funnelId).
+      const jobId = kind === 'funnel' ? creative.funnelId ?? creative.jobId : creative.jobId;
       if (jobId && kind) {
         await db.contentJob.update({
           where: { id: job.id },
@@ -155,7 +156,15 @@ export async function POST(req: NextRequest) {
             status: 'running',
             toolName: planned.tool,
             creditsNote: ASSET_TYPES[assetType].creditsNote,
-            result: { jobKind: kind, jobId, tool: planned.tool } as object,
+            result: {
+              jobKind: kind,
+              jobId,
+              tool: planned.tool,
+              offerUrl: creative.offerUrl ?? (planned.tool === 'create_funnel' ? ctx.website : undefined),
+              // Lets the poller answer a needs-description pause from the audit
+              // instead of dead-ending (create_funnel never invents a page).
+              ...(planned.tool === 'create_funnel' ? { funnelDescription: funnelDescription(ctx) } : {}),
+            } as object,
           },
         });
         return NextResponse.json({ jobId: job.id, status: 'running', provider: 'pnr-mcp', tool: planned.tool });

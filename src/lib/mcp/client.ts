@@ -255,6 +255,18 @@ export interface CreativeResult {
   caption?: string;
   /** iMessage thread extracted from the creative (demo_pack /before includes one). */
   thread?: ThreadMessage[];
+  /** create_funnel bestof: the published page bundling the whole day (dayPack.shareUrl). Never an MP4 source. */
+  shareUrl?: string;
+  /** The creative to hand request_mp4 (funnels name it explicitly). */
+  mp4PageUrl?: string;
+  mp4Url?: string;
+  /** The offer link the funnel CTA points at; shown under previews. */
+  offerUrl?: string;
+  /** get_job_status lifecycle: working | done | failed | needs_input. */
+  phase?: string;
+  terminal?: boolean;
+  status?: string;
+  pollAfterSec?: number;
 }
 
 const THREAD_KEY_RE = /^(i?messages?|thread|conversation|texts|sms|chat|bubbles)$/i;
@@ -344,14 +356,22 @@ function collectFrom(obj: unknown, out: CreativeResult, depth = 0): void {
       else if (lower === 'caption' && !out.caption) out.caption = value;
       else if (lower === 'headline' && !out.headline) out.headline = value;
       else if (lower === 'referralurl' && !out.referralUrl) out.referralUrl = value;
-      else if ((lower === 'jobid' || lower === 'funnelid') && !out.jobId) {
-        out.jobId = value;
-        out.funnelId = lower === 'funnelid' ? value : out.funnelId;
-      } else if (lower === 'kind' && !out.jobKind) out.jobKind = value;
+      else if (lower === 'shareurl' && !out.shareUrl) out.shareUrl = value;
+      else if (lower === 'mp4pageurl' && !out.mp4PageUrl) out.mp4PageUrl = value;
+      else if (lower === 'mp4url' && !out.mp4Url) out.mp4Url = value;
+      else if (lower === 'funnelid' && !out.funnelId) {
+        out.funnelId = value;
+        if (!out.jobId) out.jobId = value;
+      } else if (lower === 'jobid' && !out.jobId) out.jobId = value;
+      else if (lower === 'kind' && !out.jobKind) out.jobKind = value;
       if (/^https?:\/\//.test(value) && /\.(png|jpe?g|webp|gif)(\?|$)/i.test(value) && !out.mediaUrls.includes(value)) {
         out.mediaUrls.push(value);
       }
     } else if (value !== null && typeof value === 'object') {
+      if (lower === 'offer' && !out.offerUrl) {
+        const u = (value as Record<string, unknown>).url;
+        if (typeof u === 'string') out.offerUrl = u;
+      }
       if (lower === 'adassets' || lower === 'assets' || lower === 'creatives') {
         collectFrom(value, out, depth + 1);
       } else {
@@ -373,6 +393,18 @@ export function extractCreative(data: unknown, text: string): CreativeResult {
     }
   }
   collectThread(data ?? out.raw, out);
+  // Job lifecycle fields live at the top level of get_job_status results.
+  let top: unknown = data;
+  if (typeof data === 'string') {
+    try { top = JSON.parse(data); } catch { top = null; }
+  }
+  if (top && typeof top === 'object' && !Array.isArray(top)) {
+    const t = top as Record<string, unknown>;
+    if (typeof t.phase === 'string') out.phase = t.phase;
+    if (typeof t.terminal === 'boolean') out.terminal = t.terminal;
+    if (typeof t.status === 'string') out.status = t.status;
+    if (typeof t.pollAfterSec === 'number') out.pollAfterSec = t.pollAfterSec;
+  }
   if (!out.postCopy && text && text.length < 4000 && !out.pageUrl) out.postCopy = text;
   return out;
 }
