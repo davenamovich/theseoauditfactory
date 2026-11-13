@@ -25,7 +25,15 @@ function injectBase(html: string, pageUrl: string): string {
     /<meta[^>]+http-equiv=["']?content-security-policy["']?[^>]*>/gi,
     ''
   );
-  const baseTag = `<base href="${pageUrl}">`;
+  // The wall's audioscript pages carry their own soundtrack, but the showcase
+  // iframe is pointer-events:none, so its pause/mute controls are unreachable.
+  // Mute the proxy on load (visuals untouched) - visitors who want the audio
+  // experience click through to the page on the wall itself.
+  const muteScript =
+    '<script>(function(){var p=HTMLMediaElement.prototype.play;' +
+    'HTMLMediaElement.prototype.play=function(){try{this.muted=true}catch(e){}return p.apply(this,arguments)};' +
+    'document.addEventListener("play",function(e){if(e.target&&e.target.muted===false){try{e.target.muted=true}catch(e){}}},true);})();</script>';
+  const baseTag = `<base href="${pageUrl}">${muteScript}`;
   if (/<head[^>]*>/i.test(cleaned)) {
     return cleaned.replace(/<head[^>]*>/i, (match) => `${match}\n${baseTag}`);
   }

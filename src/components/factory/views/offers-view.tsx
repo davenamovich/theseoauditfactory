@@ -249,8 +249,9 @@ export function OffersView() {
           <p className="mt-2.5 text-sm text-muted-foreground leading-relaxed">
             The phone below is not a screenshot - it streams the freshest pages published on the
             Plunder &amp; Riffle wall, auto-advancing every few seconds and re-fetching the feed every
-            minute. Whatever the engine just shipped appears here first. The same engine that built
-            your free /BEFORE.
+            minute. Every page started as someone's /BEFORE: memes generated from that person's actual
+            website, never a generic prompt. Yours works the same way - built from your site, the same
+            engine that made these.
           </p>
         </div>
 
@@ -272,8 +273,8 @@ export function OffersView() {
                 <Factory className="h-4 w-4 text-primary" aria-hidden />
                 <p className="mt-2 text-sm font-bold">Proof the engine is real</p>
                 <p className="mt-1 text-xs text-muted-foreground leading-relaxed">
-                  Every page you see was generated and published by a live bot through the P&amp;R MCP -
-                  no stock images, no lorem ipsum.
+                  Every page you see was generated from a real website by the live P&amp;R MCP bot - no
+                  stock images, no lorem ipsum, no generic prompts.
                 </p>
               </div>
             </div>

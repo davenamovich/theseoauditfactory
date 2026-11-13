@@ -72,10 +72,20 @@ export async function generateFallback(assetType: string, ctx: BuildContext): Pr
   if (assetType === 'before-pitch') {
     const industry = ctx.industry || 'small business';
     const problem = ctx.report?.topProblems?.[0]?.title;
+    // Site-based, not a generic prompt: the visual must depict THIS business.
+    // What they sell comes straight from the crawl of their own homepage, so
+    // a pizzeria gets pizza props and a plumber gets pipe props - never an
+    // arbitrary storefront that could belong to anyone.
+    const sells =
+      ctx.report?.homeH1 || ctx.report?.homeTitle || ctx.report?.homeDescription || ctx.topic || '';
     const visualPrompt =
-      `Amateur documentary-style smartphone photo: a slightly neglected ${industry} storefront, ` +
-      `faded paint on the sign, dated window display, a taped paper notice on the door, overcast lighting. ` +
-      `Realistic "before the renovation" mood, muted colors, honest and specific. ` +
+      `Amateur documentary-style smartphone photo of the neglected storefront of ${brand}` +
+      `, a ${industry} business` +
+      (sells
+        ? ` whose homepage is about "${sells.slice(0, 120)}" - the window display, shelves and props must clearly depict exactly that product or service`
+        : '') +
+      `, faded paint on the sign, dated window display, a taped paper notice on the door, overcast lighting. ` +
+      `Realistic "before the renovation" mood, muted colors, honest and specific to this business. ` +
       (problem ? `The scene should subtly reflect this flaw: ${problem}. ` : '') +
       `Square composition, no text, no letters, no words, no logos in the image.`;
     const image = await zai.images.generations.create({ prompt: visualPrompt, size: '1024x1024' });

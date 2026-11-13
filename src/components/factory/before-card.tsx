@@ -284,8 +284,9 @@ export function BeforeCard({
           <p className="mt-2.5 text-sm text-muted-foreground max-w-xl leading-relaxed">
             We hand your website to the live Plunder &amp; Riffle <span className="font-semibold text-foreground">/before</span> engine:
             Joe records a custom welcome and builds <span className="font-semibold text-foreground">five real examples</span> - memes,
-            an iMessage thread, the works - grounded in what your site actually says. On the house, because every
-            transformation starts with the honest shot.
+            an iMessage thread, the works - generated from what your site actually says. Not a generic
+            prompt: your pizza place gets pizza memes. On the house, because every transformation starts
+            with the honest shot.
           </p>
 
           {!job && !working && (
