@@ -3,7 +3,7 @@ import { db } from '@/lib/db';
 
 export const runtime = 'nodejs';
 
-const ALLOWED = new Set(['pnr_click', 'article_view', 'glossary_view', 'resources_view', 'mp4_approve']);
+const ALLOWED = new Set(['pnr_click', 'article_view', 'glossary_view', 'resources_view', 'mp4_approve', 'agent_prompt_copy']);
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));

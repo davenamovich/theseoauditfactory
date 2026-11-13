@@ -17,6 +17,8 @@ import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import { ScoreRing, scoreColor } from '../score-ring';
 import { PnRBanner } from '../pnr-banner';
+import { BeforeCard } from '../before-card';
+import { AgentPromptCard } from '../agent-prompt-card';
 import { ContentStudio } from './studio-view';
 import type { AuditReport, Finding, SavingsOpportunity, Severity } from '@/lib/seo/types';
 import type { Route } from '../router';
@@ -412,6 +414,12 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
           ))}
         </div>
       </section>
+
+      {/* Personalized prompt the user hands to their OWN agent (built from results) */}
+      <AgentPromptCard report={report} />
+
+      {/* The free /BEFORE - meme journey hook (real P&R MCP generation) */}
+      <BeforeCard auditId={meta.shareId} navigate={navigate} />
 
       {/* Content ideas + studio */}
       <section className="mt-12 rounded-2xl border border-primary/25 bg-card/70 p-6 sm:p-8 print-card">
