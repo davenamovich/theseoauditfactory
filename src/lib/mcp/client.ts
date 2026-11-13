@@ -235,6 +235,13 @@ export async function callTool(
 // ---------------------------------------------------------------------------
 // Result shape extraction (the server returns preview pageUrl, PNG urls, copy)
 // ---------------------------------------------------------------------------
+
+/** One iMessage-style bubble. "me" = blue side (sender), "them" = grey side. */
+export interface ThreadMessage {
+  from: 'them' | 'me';
+  text: string;
+}
+
 export interface CreativeResult {
   pageUrl?: string;
   mediaUrls: string[];
@@ -246,6 +253,80 @@ export interface CreativeResult {
   raw: unknown;
   headline?: string;
   caption?: string;
+  /** iMessage thread extracted from the creative (demo_pack /before includes one). */
+  thread?: ThreadMessage[];
+}
+
+const THREAD_KEY_RE = /^(i?messages?|thread|conversation|texts|sms|chat|bubbles)$/i;
+const THREAD_TEXT_KEYS = ['text', 'message', 'body', 'content', 'bubble', 'line'];
+const THREAD_SENDER_KEYS = ['from', 'sender', 'author', 'role', 'who', 'side', 'mine'];
+
+/**
+ * Map an arbitrary array into iMessage bubbles. Accepts plain strings
+ * (alternating sides) or objects with text-ish and sender-ish keys.
+ * Returns null when the array does not look like a conversation, so error
+ * lists or unrelated "messages" arrays are never turned into fake dialogue.
+ */
+function tryMapThread(arr: unknown[]): ThreadMessage[] | null {
+  const objects = arr.filter((i) => i !== null && typeof i === 'object');
+  const strings = arr.filter((i) => typeof i === 'string' && i.trim());
+  // Strings-only arrays must be long enough to plausibly be a conversation.
+  if (objects.length === 0 && strings.length < 4) return null;
+
+  const out: ThreadMessage[] = [];
+  let flip = false; // alternates when the item carries no sender info
+  for (const item of arr.slice(0, 16)) {
+    if (typeof item === 'string') {
+      const text = item.trim().slice(0, 280);
+      if (!text) continue;
+      out.push({ from: flip ? 'me' : 'them', text });
+      flip = !flip;
+      continue;
+    }
+    if (item === null || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const rawText = THREAD_TEXT_KEYS.map((k) => rec[k]).find(
+      (v) => typeof v === 'string' && v.trim()
+    ) as string | undefined;
+    if (!rawText) continue;
+    const rawSender = THREAD_SENDER_KEYS.map((k) => rec[k]).find(
+      (v) => typeof v === 'string' || typeof v === 'boolean'
+    );
+    let from: 'them' | 'me';
+    if (typeof rawSender === 'boolean') {
+      from = rawSender ? 'me' : 'them';
+    } else if (typeof rawSender === 'string') {
+      const s = rawSender.toLowerCase();
+      from =
+        /\b(me|mine|owner|brand|business|you|joe|us|sent)\b/.test(s) || s === 'true'
+          ? 'me'
+          : 'them';
+      flip = from === 'them'; // keep alternation in sync with explicit senders
+    } else {
+      from = flip ? 'me' : 'them';
+      flip = !flip;
+    }
+    out.push({ from, text: rawText.trim().slice(0, 280) });
+  }
+  return out.length >= 2 ? out : null;
+}
+
+function collectThread(obj: unknown, out: CreativeResult, depth = 0): void {
+  if (depth > 6 || out.thread || obj === null || typeof obj !== 'object') return;
+  if (Array.isArray(obj)) {
+    for (const item of obj) collectThread(item, out, depth + 1);
+    return;
+  }
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (!out.thread && Array.isArray(value) && THREAD_KEY_RE.test(key)) {
+      const mapped = tryMapThread(value);
+      if (mapped) {
+        out.thread = mapped;
+        continue;
+      }
+    }
+    collectThread(value, out, depth + 1);
+  }
 }
 
 function collectFrom(obj: unknown, out: CreativeResult, depth = 0): void {
@@ -291,6 +372,7 @@ export function extractCreative(data: unknown, text: string): CreativeResult {
       /* plain text result */
     }
   }
+  collectThread(data ?? out.raw, out);
   if (!out.postCopy && text && text.length < 4000 && !out.pageUrl) out.postCopy = text;
   return out;
 }

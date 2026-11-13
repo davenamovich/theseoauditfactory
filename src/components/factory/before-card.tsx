@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { PhoneThread, type PhoneThreadMessage } from './phone-thread';
 
 interface BeforeResult {
   pageUrl?: string;
@@ -22,6 +23,26 @@ interface BeforeResult {
   postCopy?: string;
   caption?: string;
   headline?: string;
+  /** iMessage thread returned by the MCP call (or built-in engine). */
+  thread?: PhoneThreadMessage[];
+}
+
+/** Persisted so the offers-page phone can replay the visitor's real thread. */
+const BEFORE_STORE_KEY = 'saf:before-thread';
+
+/** Prefer the real generated thread; otherwise synthesize bubbles from the
+ * actual caption/copy so the phone shows what the engine produced, never a
+ * canned chat. Used by both the render path and the persistence effect. */
+function buildThreadMessages(r: BeforeResult): PhoneThreadMessage[] {
+  if (r.thread?.length) return r.thread;
+  const synth: PhoneThreadMessage[] = [];
+  if (r.caption) {
+    synth.push({ from: 'them', text: 'ok show me the honest before' });
+    synth.push({ from: 'me', text: r.caption });
+  }
+  if (r.postCopy) synth.push({ from: 'me', text: r.postCopy });
+  else if (r.headline) synth.push({ from: 'me', text: r.headline });
+  return synth;
 }
 
 interface BeforeJob {
@@ -211,6 +232,42 @@ export function BeforeCard({
   const r = job?.result ?? {};
   const copyBlock = [r.caption, r.postCopy].filter(Boolean).join('\n\n');
 
+  // The MCP call, returned in a beveled iPhone.
+  const threadMessages: PhoneThreadMessage[] = buildThreadMessages(r);
+  const phoneImageUrl = isFallback
+    ? `/api/content/image?jobId=${job?.id ?? ''}`
+    : r.mediaUrls?.[0];
+  const phoneHasContent = threadMessages.length > 0 || Boolean(phoneImageUrl);
+
+  // Persist the real thread so the offers-page beveled iPhone replays it.
+  // Deps are the whole job: the fallback flow sets status 'completed' twice
+  // (first with result: null, then with the real result), so keying on
+  // status alone would miss the second write.
+  useEffect(() => {
+    if (job?.status !== 'completed' || !job.result) return;
+    const res = job.result;
+    const img =
+      job.provider === 'built-in-fallback'
+        ? `/api/content/image?jobId=${job.id}`
+        : res.mediaUrls?.[0];
+    try {
+      localStorage.setItem(
+        BEFORE_STORE_KEY,
+        JSON.stringify({
+          thread: buildThreadMessages(res),
+          imageUrl: img,
+          caption: res.caption ?? '',
+          postCopy: res.postCopy ?? '',
+          provider: job.provider,
+          toolName: job.toolName,
+          at: Date.now(),
+        })
+      );
+    } catch {
+      /* storage unavailable - the report view still shows the phone */
+    }
+  }, [job]);
+
   return (
     <section
       aria-label="Your free before generation"
@@ -329,23 +386,50 @@ export function BeforeCard({
           )}
         </div>
 
-        {/* Beveled mini phone with a before/after teaser */}
-        <div className="shrink-0 hidden md:flex items-center" aria-hidden>
-          <div className="relative w-[150px] rounded-[1.8rem] bg-gradient-to-b from-zinc-400 via-zinc-700 to-zinc-900 p-[2px] phone-bevel -rotate-[4deg] hover:rotate-0 transition-transform duration-500">
-            <div className="rounded-[1.74rem] bg-zinc-950 p-[6px]">
-              <div className="relative rounded-[1.5rem] overflow-hidden bg-[#0b0f13] h-[240px] flex flex-col">
-                <div className="absolute top-1.5 left-1/2 -translate-x-1/2 h-2.5 w-10 rounded-full bg-black z-10" />
-                <div className="flex-1 flex flex-col items-center justify-center text-center px-3 gap-1.5 pt-4">
-                  <Camera className="h-5 w-5 text-secondary" />
-                  <p className="text-[10px] font-black leading-tight text-zinc-100">
-                    &ldquo;THE BEFORE. WE ALL HAVE ONE.&rdquo;
-                  </p>
-                  <p className="text-[7.5px] text-zinc-500">Custom examples from your real site</p>
+        {/* The MCP call, returned in a beveled iPhone */}
+        <div className="shrink-0 flex flex-col items-center gap-3 md:pl-2">
+          {working && (
+            <PhoneThread
+              title="Messages · Joe is typing..."
+              tag="Live"
+              messages={[]}
+              typing
+              typingLabel="the /before engine"
+              footer="your honest before is developing..."
+            />
+          )}
+          {job?.status === 'completed' && phoneHasContent && (
+            <PhoneThread
+              title={isPnR ? 'Messages · your /BEFORE thread (P&R MCP)' : 'Messages · your /BEFORE thread'}
+              tag="Yours"
+              messages={threadMessages}
+              imageUrl={phoneImageUrl}
+              imageAlt="Your generated before shot, returned inside the iPhone"
+              footer="generated from your website"
+            />
+          )}
+          {(!job || job.status === 'failed') && (
+            <div className="hidden md:flex flex-col items-center gap-3" aria-hidden>
+              <div className="relative w-[150px] rounded-[1.8rem] bg-gradient-to-b from-zinc-400 via-zinc-700 to-zinc-900 p-[2px] phone-bevel -rotate-[4deg] hover:rotate-0 transition-transform duration-500">
+                <div className="rounded-[1.74rem] bg-zinc-950 p-[6px]">
+                  <div className="relative rounded-[1.5rem] overflow-hidden bg-[#0b0f13] h-[240px] flex flex-col">
+                    <div className="absolute top-1.5 left-1/2 -translate-x-1/2 h-2.5 w-10 rounded-full bg-black z-10" />
+                    <div className="flex-1 flex flex-col items-center justify-center text-center px-3 gap-1.5 pt-4">
+                      <Camera className="h-5 w-5 text-secondary" />
+                      <p className="text-[10px] font-black leading-tight text-zinc-100">
+                        &ldquo;THE BEFORE. WE ALL HAVE ONE.&rdquo;
+                      </p>
+                      <p className="text-[7.5px] text-zinc-500">Custom examples from your real site</p>
+                    </div>
+                    <div className="bg-black/40 px-2 py-1 text-[7px] text-zinc-400 tracking-wider">/BEFORE ENGINE</div>
+                  </div>
                 </div>
-                <div className="bg-black/40 px-2 py-1 text-[7px] text-zinc-400 tracking-wider">/BEFORE ENGINE</div>
               </div>
+              <p className="text-[10px] text-muted-foreground max-w-[200px] text-center leading-relaxed">
+                Your generated thread lands here, in the iPhone.
+              </p>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </section>

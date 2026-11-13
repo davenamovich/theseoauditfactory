@@ -57,14 +57,14 @@ function StatusBar() {
   );
 }
 
-export function PhoneScreenShell({ title, children }: { title: string; children: ReactNode }) {
+export function PhoneScreenShell({ title, tag = 'Sample', children }: { title: string; tag?: string; children: ReactNode }) {
   return (
     <>
       <StatusBar />
       <div className="flex items-center gap-1.5 pb-2">
         <div className="h-5 w-5 rounded-md bg-primary/20 flex items-center justify-center text-[10px] font-black text-primary">SF</div>
         <span className="text-[10px] font-semibold tracking-wide text-zinc-200">{title}</span>
-        <span className="ml-auto text-[8px] font-mono text-zinc-500 uppercase">Sample</span>
+        <span className="ml-auto text-[8px] font-mono text-zinc-500 uppercase">{tag}</span>
       </div>
       <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
     </>

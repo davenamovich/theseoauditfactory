@@ -3,6 +3,7 @@
 // so it is never mistaken for a Plunder & Riffle generation.
 import ZAI from 'z-ai-web-dev-sdk';
 import type { BuildContext } from './assets';
+import type { ThreadMessage } from './client';
 
 export interface FallbackResult {
   kind: 'image' | 'text';
@@ -11,6 +12,8 @@ export interface FallbackResult {
   text?: string;
   caption?: string;
   postCopy?: string;
+  /** iMessage thread so the result renders inside the beveled iPhone. */
+  thread?: ThreadMessage[];
 }
 
 function contextText(ctx: BuildContext): string {
@@ -45,6 +48,19 @@ const ANTI_HALLUCINATION =
   'No emojis.';
 
 const IMAGE_TYPES = new Set(['meme', 'promo-meme', 'carousel', 'social-graphic']);
+
+function sanitizeThread(raw: unknown): ThreadMessage[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: ThreadMessage[] = [];
+  for (const item of raw.slice(0, 14)) {
+    if (item === null || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    const text = typeof rec.text === 'string' ? rec.text.trim().slice(0, 280) : '';
+    const from = rec.from === 'me' ? 'me' : 'them';
+    if (text) out.push({ from, text });
+  }
+  return out.length >= 2 ? out : undefined;
+}
 
 export async function generateFallback(assetType: string, ctx: BuildContext): Promise<FallbackResult> {
   const zai = await ZAI.create();
@@ -91,7 +107,37 @@ export async function generateFallback(assetType: string, ctx: BuildContext): Pr
       caption = 'The before. We all have one.';
       postCopy = copy.choices[0]?.message?.content ?? '';
     }
-    return { kind: 'image', base64, mime: 'image/png', caption, postCopy };
+
+    // The iMessage thread: the shareable conversation that renders inside the
+    // beveled iPhone. Written from what the audit actually saw.
+    let thread: ThreadMessage[] | undefined;
+    try {
+      const convo = await zai.chat.completions.create({
+        messages: [
+          {
+            role: 'assistant',
+            content:
+              'You write short iMessage conversations used as shareable marketing assets. Return JSON only: ' +
+              '{"thread":[{"from":"them","text":"..."},{"from":"me","text":"..."}]} where "them" is a skeptical friend ' +
+              'and "me" is the business owner answering honestly. 8-10 messages, casual lowercase texting style, ' +
+              'funny but truthful, grounded ONLY in the provided website context, no emojis, each text under 120 characters. ' +
+              'The friend starts by teasing the website, the owner admits the honest before, mentions the free audit ' +
+              'picked it up, and the thread ends with the friend asking how to get their own. No markdown fences. ' +
+              ANTI_HALLUCINATION,
+          },
+          { role: 'user', content: `${context}\n\nWrite the iMessage thread.` },
+        ],
+        thinking: { type: 'disabled' },
+      });
+      const parsed = JSON.parse(
+        (convo.choices[0]?.message?.content ?? '').replace(/```json|```/g, '').trim()
+      );
+      thread = sanitizeThread(parsed.thread);
+    } catch {
+      thread = undefined; // the phone falls back to caption/postCopy bubbles
+    }
+
+    return { kind: 'image', base64, mime: 'image/png', caption, postCopy, thread };
   }
 
   if (IMAGE_TYPES.has(assetType)) {

@@ -5,11 +5,12 @@
 // honest disclosure. Includes the complimentary iMessage thread and meme
 // strip that carry the visitor on the same journey as their audit.
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowRight, BadgeCheck, Coffee, CreditCard, Factory, Laugh, MessageSquare, ShieldCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { PhoneFrame, PhoneScreenShell } from '../phone-frame';
+import { PhoneThread, type PhoneThreadMessage } from '../phone-thread';
 
 function track(kind: string, meta: Record<string, unknown>): void {
   fetch('/api/track', {
@@ -73,10 +74,36 @@ const THREAD: Array<{ from: 'them' | 'me'; text: string }> = [
   { from: 'them', text: 'sending you my site now' },
 ];
 
+/** The visitor's real /BEFORE thread, persisted by the report page. */
+interface SavedBefore {
+  thread?: PhoneThreadMessage[];
+  imageUrl?: string;
+  provider?: string;
+  toolName?: string;
+  at?: number;
+}
+
+function readSavedBefore(): SavedBefore | null {
+  try {
+    const raw = localStorage.getItem('saf:before-thread');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as SavedBefore;
+    return parsed.thread && parsed.thread.length >= 2 ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export function OffersView() {
+  // Reads localStorage lazily. This view only mounts after hash navigation
+  // (post-hydration), so a lazy initializer is hydration-safe and needs no effect.
+  const [saved] = useState<SavedBefore | null>(readSavedBefore);
+
   useEffect(() => {
     track('resources_view', { view: 'offers' });
   }, []);
+
+  const realThread = saved?.thread ?? [];
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -127,28 +154,46 @@ export function OffersView() {
       {/* Complimentary iMessage thread + meme strip */}
       <div className="mt-14 grid gap-10 lg:grid-cols-[auto_1fr] items-center">
         <div className="mx-auto lg:mx-0">
-          <PhoneFrame>
-            <PhoneScreenShell title="Messages · the honest thread">
-              <div className="flex flex-col gap-1.5 pt-1">
-                {THREAD.map((m, i) => (
-                  <div key={i} className={m.from === 'me' ? 'self-end' : 'self-start'} style={{ maxWidth: '85%' }}>
-                    <div
-                      className={
-                        m.from === 'me'
-                          ? 'rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-3 py-1.5 text-[11px] font-medium leading-snug'
-                          : 'rounded-2xl rounded-bl-sm bg-zinc-800 text-zinc-100 px-3 py-1.5 text-[11px] font-medium leading-snug'
-                      }
-                    >
-                      {m.text}
-                    </div>
+          {realThread.length >= 2 ? (
+            <>
+              <PhoneThread
+                title="Messages · your /BEFORE thread"
+                tag="Yours"
+                messages={realThread}
+                imageUrl={saved?.imageUrl}
+                imageAlt="Your generated before shot"
+                footer="generated from your website"
+              />
+              <p className="mt-2 text-center text-[11px] text-muted-foreground flex items-center justify-center gap-1.5">
+                <MessageSquare className="h-3 w-3" /> Your real /BEFORE thread, generated from your website
+              </p>
+            </>
+          ) : (
+            <>
+              <PhoneFrame>
+                <PhoneScreenShell title="Messages · the honest thread">
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    {THREAD.map((m, i) => (
+                      <div key={i} className={m.from === 'me' ? 'self-end' : 'self-start'} style={{ maxWidth: '85%' }}>
+                        <div
+                          className={
+                            m.from === 'me'
+                              ? 'rounded-2xl rounded-br-sm bg-primary text-primary-foreground px-3 py-1.5 text-[11px] font-medium leading-snug'
+                              : 'rounded-2xl rounded-bl-sm bg-zinc-800 text-zinc-100 px-3 py-1.5 text-[11px] font-medium leading-snug'
+                          }
+                        >
+                          {m.text}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            </PhoneScreenShell>
-          </PhoneFrame>
-          <p className="mt-2 text-center text-[11px] text-muted-foreground flex items-center justify-center gap-1.5">
-            <MessageSquare className="h-3 w-3" /> The complimentary iMessage every visitor gets to send
-          </p>
+                </PhoneScreenShell>
+              </PhoneFrame>
+              <p className="mt-2 text-center text-[11px] text-muted-foreground flex items-center justify-center gap-1.5">
+                <MessageSquare className="h-3 w-3" /> The complimentary iMessage every visitor gets to send
+              </p>
+            </>
+          )}
         </div>
 
         <div>
