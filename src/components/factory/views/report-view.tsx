@@ -414,7 +414,7 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
       </section>
 
       {/* Content ideas + studio */
-      {/* One-click funnel creator */}
+      /* One-click funnel creator */}
       <section className="mt-12 rounded-2xl border border-primary/25 bg-card/70 p-6 sm:p-8 print-card">
         <h2 className="text-xl font-black tracking-tight text-center sm:text-left">
           YOUR WEBSITE HAS CONTENT. <span className="text-primary">LET&apos;S TURN IT INTO ATTENTION.</span>
@@ -432,7 +432,7 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
         </div>
       </section>
 
-      {/* One-click funnel creator */
+      /* One-click funnel creator */
       <section className="mt-8 rounded-xl border border-primary/25 bg-card/80 p-5 sm:p-6 print-card">
         <h2 className="font-black tracking-tight">CREATE FREE MARKETING FUNNEL</h2>
         <p className="mt-2 text-sm text-muted-foreground">
