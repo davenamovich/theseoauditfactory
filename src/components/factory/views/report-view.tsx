@@ -20,6 +20,7 @@ import { PnRBanner } from '../pnr-banner';
 import { BeforeCard } from '../before-card';
 import { AgentPromptCard } from '../agent-prompt-card';
 import { ContentStudio } from './studio-view';
+import { FunnelCard } from '../funnel-card';
 import type { AuditReport, Finding, SavingsOpportunity, Severity } from '@/lib/seo/types';
 import type { Route } from '../router';
 
@@ -140,29 +141,6 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
       toast({ title: 'Share link copied', description: 'Anyone with the link can view this report.' });
     } catch {
       toast({ title: 'Copy failed', description: shareLink });
-    }
-  };
-
-  const createFunnelAndNavigate = async (host: string, shareId: string) => {
-    try {
-      const res = await fetch('/api/content/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          auditId: shareId,
-          assetType: 'stick-figure-video',
-          topic: 'Marketing funnel from SEO audit'
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        toast({ title: 'Funnel creation failed', description: data.error ?? 'Please try again.' });
-        return;
-      }
-      // Navigate to the SEO page after funnel creation
-      navigate(`/seo-page/${shareId}`);
-    } catch {
-      toast({ title: 'Network error', description: 'Could not create funnel. Try again.' });
     }
   };
 
@@ -439,20 +417,8 @@ export function ReportView({ id, navigate }: { id: string; navigate: (to: string
         </div>
       </section>
 
-      {/* One-click funnel creator */}
-      <section className="mt-8 rounded-xl border border-primary/25 bg-card/80 p-5 sm:p-6 print-card">
-        <h2 className="font-black tracking-tight">CREATE FREE MARKETING FUNNEL</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Generate a stick-figure marketing video funnel from your audit and send visitors
-          directly to your SEO page.
-        </p>
-        <Button
-          onClick={() => createFunnelAndNavigate(meta.host, meta.shareId)}
-          className="mt-4 bg-primary text-primary-foreground hover:bg-primary/90 font-bold w-full"
-        >
-          CREATE FUNNEL & SEND TO SEO PAGE
-        </Button>
-      </section>
+      {/* Audit -> funnel via the live P&R MCP (create_funnel, bestof day pack) */}
+      <FunnelCard auditId={meta.shareId} report={report} />
 
       {/* Pages sampled */}
       <section className="mt-12">

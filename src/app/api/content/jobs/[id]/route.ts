@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { pollJob, extractCreative, setMcpApiKey } from '@/lib/mcp/client';
+import { callTool, pollJob, extractCreative, setMcpApiKey } from '@/lib/mcp/client';
 import { resolvePnrApiKey } from '@/lib/credentials';
 
 export const runtime = 'nodejs';
@@ -11,7 +11,7 @@ const RUN_TIMEOUT_MS = 8 * 60 * 1000;
 // Poll a content job. For async P&R jobs, this lazily polls get_job_status
 // against the live MCP server (the MCP guidance is to poll every 20-30s;
 // we cache the poll result server-side so browser refreshes do not spam it).
-const lastPoll = new Map<string, { at: number; payload: unknown }>();
+const lastPoll = new Map<string, { at: number; payload: unknown; ttl?: number }>();
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -44,7 +44,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     await db.contentJob.update({ where: { id: job.id }, data: { status: 'failed', error: 'Generation timed out (8 min).', completedAt: new Date() } });
     return NextResponse.json(serialize('failed', job.provider, job.toolName, job.result, 'Generation timed out (8 min).', job.creditsNote, job.createdAt, new Date()));
   }
-  if (cached && now - cached.at < 12_000) {
+  if (cached && now - cached.at < (cached.ttl ?? 12_000)) {
     return NextResponse.json(cached.payload);
   }
 
@@ -52,18 +52,67 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   setMcpApiKey(key);
   const res = await pollJob(kind, remoteJobId, 45_000);
   const creative = extractCreative(res.data, res.text);
-  const payload = { ...(creative as Record<string, unknown>), jobKind: kind, jobId: remoteJobId, tool: result.tool };
+  // Keep request-time facts (offer link, funnel description) on the stored result.
+  const payload = {
+    ...result,
+    ...(creative as unknown as Record<string, unknown>),
+    offerUrl: creative.offerUrl ?? result.offerUrl,
+    jobKind: kind,
+    jobId: remoteJobId,
+    tool: result.tool,
+  };
+  // Honour the server's pollAfterSec (12-30s) so browser polling never spams P&R.
+  const ttl = Math.min(30_000, Math.max(12_000, (creative.pollAfterSec ?? 12) * 1000));
 
-  if (!res.ok) {
-    const errText = (res.text || 'Job status check failed').slice(0, 500);
-    await db.contentJob.update({ where: { id: job.id }, data: { status: 'failed', error: errText, completedAt: new Date() } });
-    const out = serialize('failed', job.provider, job.toolName, job.result, errText, job.creditsNote, job.createdAt, new Date());
+  const fail = async (errText: string) => {
+    await db.contentJob.update({ where: { id: job.id }, data: { status: 'failed', error: errText.slice(0, 500), completedAt: new Date() } });
+    const out = serialize('failed', job.provider, job.toolName, job.result, errText.slice(0, 500), job.creditsNote, job.createdAt, new Date());
     lastPoll.set(job.id, { at: now, payload: out });
     return NextResponse.json(out);
+  };
+  const stillRunning = (resultForRow: unknown = job.result) => {
+    const out = serialize('running', job.provider, job.toolName, resultForRow, null, job.creditsNote, job.createdAt, null);
+    lastPoll.set(job.id, { at: now, payload: out, ttl });
+    return NextResponse.json(out);
+  };
+
+  if (!res.ok) return fail(res.text || 'Job status check failed');
+
+  const phase = creative.phase;
+  const hasOutput =
+    Boolean(creative.pageUrl || creative.shareUrl || creative.mp4PageUrl) ||
+    creative.mediaUrls.length > 0 ||
+    (creative.postCopy?.length ?? 0) > 0;
+
+  // needs_input: a funnel whose page could not be read pauses for a
+  // description. Answer it once from the audit, then keep polling.
+  if (phase === 'needs_input') {
+    const desc = typeof result.funnelDescription === 'string' ? result.funnelDescription : '';
+    if (kind === 'funnel' && desc && !result.describedAt) {
+      const retry = await callTool('create_funnel', { funnel_id: remoteJobId, description: desc }, 60_000);
+      if (!retry.ok) return fail(`P&R funnel needed a description and the retry failed: ${retry.text}`);
+      const updatedResult = { ...result, describedAt: new Date().toISOString() };
+      await db.contentJob.update({ where: { id: job.id }, data: { result: updatedResult as object } });
+      return stillRunning(updatedResult);
+    }
+    return fail(`P&R needs more input to continue (${creative.status ?? 'needs_input'}). ${res.text.slice(0, 300)}`);
   }
 
-  const done = Boolean((creative as Record<string, unknown>).pageUrl) || creative.mediaUrls.length > 0 || (creative.postCopy?.length ?? 0) > 0;
-  const failed = /failed|error/i.test(res.text) && !done;
+  // Funnels report each format separately (formats.<name>.status: working ->
+  // done | failed). Verified live: once the offer is read the job says
+  // phase "done", terminal true, with formats still {} - so the format we
+  // asked for decides, not the top-level phase.
+  const requested = typeof result.funnelFormat === 'string' ? result.funnelFormat : null;
+  const formatStates = kind === 'funnel' ? funnelFormatStates(res.data, requested) : [];
+  const formatWorking = formatStates.some((st) => st !== 'done' && st !== 'failed');
+  const formatAllFailed = formatStates.length > 0 && formatStates.every((st) => st === 'failed');
+
+  // Prefer the explicit lifecycle; fall back to output sniffing for older servers.
+  const done = !formatWorking && !formatAllFailed && (phase ? phase === 'done' : hasOutput);
+  const failed =
+    formatAllFailed ||
+    (phase ? phase === 'failed' : /"?(status|phase)"?\s*[:=]\s*"?(failed|error)/i.test(res.text) && !hasOutput);
+
   if (done) {
     const updated = await db.contentJob.update({
       where: { id: job.id },
@@ -73,15 +122,25 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     lastPoll.set(job.id, { at: now, payload: out });
     return NextResponse.json(out);
   }
-  if (failed) {
-    await db.contentJob.update({ where: { id: job.id }, data: { status: 'failed', error: res.text.slice(0, 500), completedAt: new Date() } });
-    const out = serialize('failed', job.provider, job.toolName, job.result, res.text.slice(0, 500), job.creditsNote, job.createdAt, new Date());
-    lastPoll.set(job.id, { at: now, payload: out });
-    return NextResponse.json(out);
+  if (failed) return fail(`${res.text.slice(0, 400)} (P&R refunds failed jobs.)`);
+  return stillRunning();
+}
+
+function funnelFormatStates(data: unknown, requested: string | null): string[] {
+  if (!data || typeof data !== 'object') return requested ? ['working'] : [];
+  const formats = (data as Record<string, unknown>).formats;
+  const map = formats && typeof formats === 'object' ? (formats as Record<string, unknown>) : {};
+  if (requested) {
+    // Not registered yet = still to come.
+    const f = map[requested];
+    const st = f && typeof f === 'object' ? (f as Record<string, unknown>).status : undefined;
+    return [typeof st === 'string' ? st.toLowerCase() : 'working'];
   }
-  const out = serialize('running', job.provider, job.toolName, job.result, null, job.creditsNote, job.createdAt, null);
-  lastPoll.set(job.id, { at: now, payload: out });
-  return NextResponse.json(out);
+  return Object.values(map).map((f) =>
+    f && typeof f === 'object' && typeof (f as Record<string, unknown>).status === 'string'
+      ? String((f as Record<string, unknown>).status).toLowerCase()
+      : 'working'
+  );
 }
 
 function serialize(

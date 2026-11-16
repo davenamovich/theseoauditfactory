@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Activity, Bot, Check, Database, FileText, Key, Loader2, Lock, Plug, Save, Settings2, TrendingUp, X,
+  Activity, Bot, Check, Database, FileText, Key, Link2, Loader2, Plug, Save, Settings2, Tag, TrendingUp, X,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -40,7 +40,8 @@ const LLMSTXT = `# The SEO Audit Factory
 - [Knowledge Center](/#/learn): 18 practical guides on SEO, AI search (GEO/AEO), local SEO and marketing economics.
 - [SEO Glossary](/#/glossary): Plain-English definitions of the terms business owners actually ask about.
 - [Free SEO Resources](/#/resources): Curated free tools from primary sources (Google Search Central, web.dev, schema.org, llmstxt.org).
-- [About & Methodology](/#/about): How the audit engine works, its limits, privacy practices and contact information.`;
+- [About & Methodology](/#/about): How the audit engine works, its limits, privacy practices and contact information.
+`;
 
 export function AdminView() {
   const [key, setKey] = useState('');
@@ -48,18 +49,22 @@ export function AdminView() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [settings, setSettings] = useState<Stats['settings'] | null>(null);
   const [pnrKeyInput, setPnrKeyInput] = useState('');
+  const [landingTitle, setLandingTitle] = useState('');
+  const [landingUrl, setLandingUrl] = useState('');
+  const [landingLinks, setLandingLinks] = useState<Array<{ id: string; title: string; url: string }>>([]);
   const [saving, setSaving] = useState(false);
   const { toast } = useToast();
 
   const authHeaders = useCallback((): Record<string, string> => {
-    const stored = sessionStorage.getItem('saf-admin-key') ?? key;
-    return { 'x-admin-key': stored };
-  }, [key]);
+    const stored = sessionStorage.getItem('saf-admin-key');
+    return stored ? { 'x-admin-key': stored } : {};
+  }, []);
 
   const load = useCallback(async () => {
     try {
       const res = await fetch('/api/admin/stats', { headers: authHeaders(), cache: 'no-store' });
-      if (res.status === 401) {
+      if (!res.ok) {
+        if (res.status === 401) sessionStorage.removeItem('saf-admin-key');
         setAuthed(false);
         return;
       }
@@ -67,33 +72,35 @@ export function AdminView() {
       setStats(data);
       setSettings(data.settings);
       setAuthed(true);
-      sessionStorage.setItem('saf-admin-key', key || sessionStorage.getItem('saf-admin-key') || '');
     } catch {
       setAuthed(false);
     }
-  }, [authHeaders, key]);
+  }, [authHeaders]);
 
   useEffect(() => {
-    const stored = sessionStorage.getItem('saf-admin-key');
-    if (stored) {
-      setKey(stored);
-      fetch('/api/admin/audits', { headers: { 'x-admin-key': stored } })
-        .then((r) => (r.ok ? (setAuthed(true), load()) : setAuthed(false)))
-        .catch(() => setAuthed(false));
-    } else {
-      setAuthed(false);
-    }
-  }, []);
+    if (sessionStorage.getItem('saf-admin-key')) load();
+    else setAuthed(false);
+  }, [load]);
 
   const login = async () => {
-    const res = await fetch('/api/admin/audits', { headers: { 'x-admin-key': key } });
-    if (res.ok) {
-      sessionStorage.setItem('saf-admin-key', key);
-      setAuthed(true);
-      load();
-    } else {
-      toast({ title: 'Wrong key', description: 'Check the admin key and try again.' });
+    const candidate = key.trim();
+    if (!candidate) {
+      toast({ title: 'Enter your key', description: 'Paste your Plunder & Riffle API key (or ADMIN_KEY) to unlock.' });
+      return;
     }
+    const res = await fetch('/api/admin/audits', { headers: { 'x-admin-key': candidate }, cache: 'no-store' });
+    if (res.ok) {
+      sessionStorage.setItem('saf-admin-key', candidate);
+      setKey('');
+      load();
+      return;
+    }
+    const body = await res.json().catch(() => ({}));
+    toast(
+      body.configured === false
+        ? { title: 'Dashboard locked', description: 'Set PNR_MCP_KEY or ADMIN_KEY in the server environment, then restart.' }
+        : { title: 'Invalid key', description: 'Check your Plunder & Riffle API key and try again.' },
+    );
   };
 
   const saveSettings = async () => {
@@ -119,7 +126,7 @@ export function AdminView() {
   };
 
   if (authed === null) {
-    return <div className="flex items-center justify-center py-32 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin text-primary mr-2" /> Checking access...</div>;
+    return <div className="flex items-center justify-center py-32 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin text-primary mr-2" /> Loading...</div>;
   }
 
   if (!authed) {
@@ -127,17 +134,17 @@ export function AdminView() {
       <div className="max-w-sm mx-auto px-4 py-24">
         <Card className="border-border/70">
           <CardContent className="p-7">
-            <Lock className="h-6 w-6 text-primary" />
-            <h1 className="mt-3 text-xl font-black tracking-tight">Admin dashboard</h1>
-            <p className="mt-1.5 text-sm text-muted-foreground">Enter the admin key. Default for this deployment: <code className="font-mono text-primary">plunder-admin</code> (set ADMIN_KEY env var in production).</p>
+            <Bot className="h-6 w-6 text-primary" />
+            <h1 className="mt-3 text-xl font-black tracking-tight">Dashboard</h1>
+            <p className="mt-1.5 text-sm text-muted-foreground">Enter your Plunder & Riffle API key (PNR_MCP_KEY) or the ADMIN_KEY set on the server.</p>
             <Input
               type="password"
-              placeholder="Admin key"
+              placeholder="PNR API key"
               value={key}
               onChange={(e) => setKey(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && login()}
               className="mt-4 bg-background/60"
-              aria-label="Admin key"
+              aria-label="PNR API key"
             />
             <Button className="mt-3 w-full bg-primary text-primary-foreground hover:bg-primary/90 font-bold" onClick={login}>
               UNLOCK DASHBOARD
@@ -149,15 +156,15 @@ export function AdminView() {
   }
 
   if (!stats || !settings) {
-    return <div className="flex items-center justify-center py-32 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin text-primary mr-2" /> Loading dashboard...</div>;
+    return <div className="flex items-center justify-center py-32 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin text-primary mr-2" /> Loading...</div>;
   }
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-black tracking-tight">ADMIN DASHBOARD</h1>
-          <p className="text-sm text-muted-foreground">Live operational data from the database and integrations.</p>
+          <h1 className="text-2xl font-black tracking-tight">DASHBOARD</h1>
+          <p className="text-sm text-muted-foreground">Create landing pages and manage your links.</p>
         </div>
         <Badge variant="outline" className="border-primary/40 text-primary">Operator</Badge>
       </div>
@@ -171,6 +178,76 @@ export function AdminView() {
         </TabsList>
 
         <TabsContent value="overview" className="mt-5 space-y-5">
+          {/* Landing Page Creation Section */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="border-border/60 bg-card/60">
+              <CardContent className="p-5">
+                <h2 className="font-bold flex items-center gap-2"><Link2 className="h-4 w-4 text-primary" /> Create Landing Page</h2>
+                <p className="mt-2 text-sm text-muted-foreground">Save your best links and create a landing page to showcase them.</p>
+                <div className="mt-4 space-y-3">
+                  <Input
+                    placeholder="Landing page title"
+                    value={landingTitle}
+                    onChange={(e) => setLandingTitle(e.target.value)}
+                    className="mt-1.5 bg-background/60"
+                    aria-label="Landing page title"
+                  />
+                  <Input
+                    placeholder="Primary URL (your best link)"
+                    value={landingUrl}
+                    onChange={(e) => setLandingUrl(e.target.value)}
+                    className="mt-1.5 bg-background/60"
+                    aria-label="Primary URL"
+                  />
+                  <Button
+                    onClick={() => {
+                      const title = landingTitle.trim();
+                      const url = landingUrl.trim();
+                      if (!title || !/^https?:\/\//i.test(url)) {
+                        toast({ title: 'Complete the form', description: 'Enter a title and a URL starting with http:// or https://.' });
+                        return;
+                      }
+                      // TODO: persist landing pages to the database; for now they last this session only.
+                      setLandingLinks((links) => [{ id: Date.now().toString(), title, url }, ...links]);
+                      setLandingTitle('');
+                      setLandingUrl('');
+                      toast({ title: 'Landing page added', description: 'Not saved yet: it disappears when you reload.' });
+                    }}
+                    className="bg-primary text-primary-foreground hover:bg-primary/90 font-bold w-full"
+                  >
+                    Save Landing Page
+                  </Button>
+                  {landingLinks.map((link) => (
+                    <div key={link.id} className="mt-3 p-3 bg-background/50 rounded-lg">
+                      <a href={link.url} target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">{link.title}</a>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+            {/* Strategic P&R Offer Advertising */}
+            <Card className="border-border/60 bg-card/60">
+              <CardContent className="p-5">
+                <h2 className="font-bold flex items-center gap-2"><Tag className="h-4 w-4 text-secondary" /> P&R Offers</h2>
+                <p className="mt-2 text-[10px] text-secondary uppercase tracking-widest">Strategically placed offers across your dashboard</p>
+                <div className="mt-4 space-y-3">
+                  {[
+                    { name: 'Agent 37', url: 'https://www.plunderandriffle.com/whop', badge: 'POWERS THIS FACTORY' },
+                    { name: 'Whop', url: 'https://www.plunderandriffle.com/whop', badge: 'LOWEST FEES WE KNOW' },
+                    { name: 'Plunder & Riffle', url: 'https://www.plunderandriffle.com/whop', badge: '18 REAL TOOLS, LIVE MCP' },
+                  ].map((offer) => (
+                    <div key={offer.name} className="flex items-center gap-2.5 rounded-lg border border-border/50 bg-background/40 px-3.5 py-2">
+                      <Badge variant="outline" className="text-[10px] font-bold shrink-0">{offer.badge}</Badge>
+                      <a href={offer.url} target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">{offer.name}</a>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-3 text-[11px] text-muted-foreground leading-relaxed">
+                  offers are illustrative and help support the platform. No paywall ever hides audit results, and the free tier never expires into a bill.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
           <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
             {[
               ['Total audits', stats.audits.total],
@@ -240,11 +317,11 @@ export function AdminView() {
             <CardContent className="p-5 flex flex-wrap gap-6 items-center">
               <div className="flex items-center gap-2.5">
                 {stats.pnrClicks > 0 ? <Check className="h-4 w-4 text-primary" /> : <X className="h-4 w-4 text-muted-foreground" />}
-                <span className="text-sm">P&amp;R banner clicks: <span className="font-mono font-bold">{stats.pnrClicks}</span></span>
+                <span className="text-sm">P&R banner clicks: <span className="font-mono font-bold">{stats.pnrClicks}</span></span>
               </div>
               <div className="flex items-center gap-2.5">
                 <Bot className="h-4 w-4 text-primary" />
-                <span className="text-sm">P&amp;R conversion to explore: <span className="font-mono font-bold">{stats.pnrClicks}</span></span>
+                <span className="text-sm">P&R conversion to explore: <span className="font-mono font-bold">{stats.pnrClicks}</span></span>
               </div>
             </CardContent>
           </Card>
@@ -294,7 +371,7 @@ export function AdminView() {
           <Card className="border-border/60 bg-card/60">
             <CardContent className="p-5">
               <h2 className="font-bold flex items-center gap-2">
-                <Plug className="h-4 w-4 text-primary" /> P&amp;R MCP (live inspection)
+                <Plug className="h-4 w-4 text-primary" /> P&R MCP (live inspection)
                 <Badge variant="outline" className={`ml-auto text-[10px] font-bold ${stats.integrations.mcp.reachable ? 'border-primary/40 text-primary' : 'border-red-500/40 text-red-400'}`}>
                   {stats.integrations.mcp.reachable ? 'REACHABLE' : 'UNREACHABLE'}
                 </Badge>
@@ -361,12 +438,12 @@ export function AdminView() {
               <div className="flex items-center justify-between rounded-lg border border-border/50 bg-background/40 px-4 py-3">
                 <div>
                   <div className="text-sm font-semibold">Built-in fallback generator</div>
-                  <div className="text-xs text-muted-foreground">Used when the P&amp;R MCP has no API key. Always labeled in the UI.</div>
+                  <div className="text-xs text-muted-foreground">Used when the P&R MCP has no API key. Always labeled in the UI.</div>
                 </div>
                 <Switch checked={settings.mcpFallbackEnabled} onCheckedChange={(v) => setSettings({ ...settings, mcpFallbackEnabled: v })} aria-label="Toggle fallback generator" />
               </div>
               <div>
-                <Label className="text-muted-foreground flex items-center gap-1.5"><Key className="h-3.5 w-3.5" /> P&amp;R MCP API key {stats.integrations.pnrKeyConfigured ? '(configured - replace or save empty to clear)' : '(not configured)'}</Label>
+                <Label className="text-muted-foreground flex items-center gap-1.5"><Key className="h-3.5 w-3.5" /> P&R MCP API key {stats.integrations.pnrKeyConfigured ? '(configured - replace or save empty to clear)' : '(not configured)'}</Label>
                 <Input
                   type="password"
                   placeholder="Paste agent API key (sent as Authorization: Bearer ...)"
@@ -385,3 +462,4 @@ export function AdminView() {
     </div>
   );
 }
+

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Camera, Clapperboard, Copy, Download, ExternalLink, Flame, GalleryHorizontal, Image as ImageIcon,
-  Laugh, Loader2, Mic, PenTool, RefreshCw, Sparkles, Type, Video, Check, Wand2,
+  Filter, Laugh, Link2, Loader2, Mic, PenTool, RefreshCw, Share2, Sparkles, Type, Video, Check, Wand2,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -27,9 +27,12 @@ interface JobResult {
   mp4Url?: string;
   mp4Status?: string;
   mp4JobId?: string;
+  shareUrl?: string;
+  mp4PageUrl?: string;
+  offerUrl?: string;
 }
 
-interface Job {
+export interface Job {
   id: string;
   assetType: string;
   topic?: string | null;
@@ -51,6 +54,7 @@ const ASSET_META: Record<string, { label: string; blurb: string; icon: typeof La
   'stick-figure-video': { label: 'Stick-Figure Video', blurb: 'A stick-figure marketing video from your site', icon: PenTool, main: false },
   'video-show': { label: 'Marketing Video', blurb: 'A short voiced marketing presentation', icon: Video, main: false },
   'captions-pack': { label: 'Captions Pack', blurb: 'Ready-to-post captions and promo copy', icon: Type, main: false },
+  'audit-funnel': { label: 'Audit-to-Funnel Day Pack', blurb: 'Your audit as a funnel: a day of content on one share page', icon: Filter, main: false },
   'repurpose-pack': { label: 'Site-to-Social Repurpose', blurb: 'Your brand voice, researched, then a creative', icon: RefreshCw, main: false },
   'site-roast': { label: 'Jobless Joe Roast', blurb: 'A 30-second comedy episode roasting your site', icon: Mic, main: false },
 };
@@ -190,7 +194,7 @@ export function ContentStudio({ auditId, compact = false }: { auditId: string; c
   );
 }
 
-function JobCard({ job, onRefresh }: { job: Job; onRefresh: () => void }) {
+export function JobCard({ job, onRefresh }: { job: Job; onRefresh: () => void }) {
   const meta = ASSET_META[job.assetType];
   const { toast } = useToast();
   const [mp4State, setMp4State] = useState<'idle' | 'rendering' | 'done' | 'failed'>(job.result?.mp4Url ? 'done' : 'idle');
@@ -280,6 +284,8 @@ function JobCard({ job, onRefresh }: { job: Job; onRefresh: () => void }) {
 
   const isPnR = provider === 'pnr-mcp';
   const isFallback = provider === 'built-in-fallback';
+  // What request_mp4 may render: the creative, never the day-pack bundle.
+  const mp4Source = r.mp4PageUrl ?? (r.pageUrl && r.pageUrl !== r.shareUrl ? r.pageUrl : undefined);
 
   return (
     <Card className={cn('border-border/60 bg-card/70', isPnR && 'border-primary/35')}>
@@ -340,7 +346,17 @@ function JobCard({ job, onRefresh }: { job: Job; onRefresh: () => void }) {
               <ExternalLink className="h-3.5 w-3.5 mr-1" /> OPEN P&R PREVIEW
             </Button>
           )}
-          {r.pageUrl && isPnR && mp4State === 'idle' && (
+          {r.shareUrl && (
+            <Button size="sm" className="bg-primary text-primary-foreground hover:bg-primary/90 font-bold" onClick={() => window.open(r.shareUrl, '_blank', 'noopener,noreferrer')}>
+              <Share2 className="h-3.5 w-3.5 mr-1" /> OPEN DAY-PACK SHARE PAGE
+            </Button>
+          )}
+          {r.shareUrl && (
+            <Button size="sm" variant="outline" className="border-border" onClick={() => copyText(r.shareUrl!)}>
+              <Copy className="h-3.5 w-3.5 mr-1" /> COPY SHARE LINK
+            </Button>
+          )}
+          {mp4Source && isPnR && mp4State === 'idle' && (
             <Button size="sm" className="bg-secondary text-secondary-foreground hover:bg-secondary/90 font-bold" onClick={approveMp4}>
               <Clapperboard className="h-3.5 w-3.5 mr-1" /> APPROVE &amp; RENDER MP4
             </Button>
@@ -356,7 +372,13 @@ function JobCard({ job, onRefresh }: { job: Job; onRefresh: () => void }) {
             </Button>
           )}
         </div>
-        {r.pageUrl && (
+        {r.offerUrl && (r.pageUrl || r.shareUrl) && (
+          <p className="mt-2 text-xs text-muted-foreground flex items-center gap-1 break-all">
+            <Link2 className="h-3 w-3 text-primary shrink-0" /> Every piece points to:{' '}
+            <a href={r.offerUrl} target="_blank" rel="noopener noreferrer" className="text-primary hover:underline">{r.offerUrl}</a>
+          </p>
+        )}
+        {(r.pageUrl || r.shareUrl) && (
           <p className="mt-2 text-[10px] text-muted-foreground flex items-center gap-1">
             <Check className="h-3 w-3 text-primary" /> P&amp;R shows a preview page first - nothing is published or rendered without your approval, exactly as their API requires.
           </p>
