@@ -1,16 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { getMcpStatus } from '@/lib/mcp/client';
-import { pnrKeyConfigured } from '@/lib/credentials';
+import { resolvePnrApiKey, pnrKeyConfigured } from '@/lib/credentials';
 import { getSettings } from '@/lib/config';
+import { adminKeyValid } from '@/lib/admin-auth';
 
 export const runtime = 'nodejs';
 
-export function adminKeyValid(req: NextRequest): boolean {
-  const expected = process.env.ADMIN_KEY || 'plunder-admin';
-  const provided = req.headers.get('x-admin-key') ?? '';
-  return provided === expected;
-}
 
 export async function GET(req: NextRequest) {
   if (!adminKeyValid(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
