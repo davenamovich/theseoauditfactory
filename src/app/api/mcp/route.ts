@@ -17,7 +17,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'crypto';
 import { startAudit, awaitAudit } from '@/lib/seo/start-audit';
 import { buildMusePack } from '@/lib/seo/muse-prompts';
-import { buildInvite } from '@/lib/seo/invite';
+import { buildInvite, resolveRef } from '@/lib/seo/invite';
 import type { AuditReport } from '@/lib/seo/types';
 
 export const runtime = 'nodejs';
@@ -32,6 +32,7 @@ const INSTRUCTIONS = [
   'Call audit_site with a URL. It returns scores, findings with evidence, a list of prompts written for Muse (the member\'s assistant), and an invitation block.',
   'Show the member the scores and the top findings first. Offer the Muse prompts as copy-ready blocks.',
   'If a tool result says the crawl is still running, call get_audit with the returned id — do not start a second audit of the same site.',
+  'Pass the member\'s own referralCode when you have it: the invite link in the result then credits them for anyone who signs up through it.',
 ].join(' ');
 
 const TOOLS = [
@@ -51,6 +52,11 @@ const TOOLS = [
           type: 'boolean',
           description: 'Ignore a recent cached report and crawl again. Spends one audit from the daily quota.',
         },
+        referralCode: {
+          type: 'string',
+          description:
+            'Optional: the caller\'s own referral code. It rides on the invite link in the result, so a signup through it is credited to them. Letters, digits, dot, underscore or hyphen, 1-64 characters; anything else is dropped and reported back as refRejected.',
+        },
       },
       required: ['url'],
       additionalProperties: false,
@@ -63,7 +69,13 @@ const TOOLS = [
       'Fetch an audit that was started earlier by its id. Use this when audit_site said the crawl was still running.',
     inputSchema: {
       type: 'object',
-      properties: { id: { type: 'string', description: 'The id returned by audit_site.' } },
+      properties: {
+        id: { type: 'string', description: 'The id returned by audit_site.' },
+        referralCode: {
+          type: 'string',
+          description: 'Optional: the caller\'s referral code, so the invite link still credits them.',
+        },
+      },
       required: ['id'],
       additionalProperties: false,
     },
@@ -100,7 +112,7 @@ function actorHash(req: NextRequest): string {
 type AuditRow = NonNullable<Awaited<ReturnType<typeof awaitAudit>>>;
 
 /** Everything one call returns, in the shape a member's assistant should show. */
-function auditPayload(row: AuditRow) {
+function auditPayload(row: AuditRow, ref: string | null, basis: string) {
   const report = (row.report ?? null) as unknown as AuditReport | null;
   return {
     id: row.id,
@@ -120,7 +132,14 @@ function auditPayload(row: AuditRow) {
     },
     report,
     muse: report ? buildMusePack(report) : null,
-    invite: buildInvite(),
+    invite: buildInvite(ref),
+    attribution: {
+      ref,
+      basis,
+      note: ref
+        ? 'The invite link carries this ref. A signup through it is credited to whoever supplied the code.'
+        : 'No referral code was supplied, so the invite link is unattributed.',
+    },
     notes: report?.notes ?? [],
   };
 }
@@ -154,6 +173,11 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (method === 'tools/call') {
     const name = String(params.name ?? '');
     const args = (params.arguments ?? {}) as Record<string, unknown>;
+    // A code in the call beats one in the URL: the caller is telling us directly.
+    const refInfo = resolveRef({
+      argument: args.referralCode as string | undefined,
+      url: req.nextUrl.searchParams.get('ref'),
+    });
 
     if (name === 'audit_site') {
       const started = await startAudit({
@@ -170,7 +194,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       const row = await awaitAudit(started.id, CRAWL_DEADLINE_MS);
       if (!row) return rpcOk(id, toolText({ error: 'The audit could not be found after starting.' }, true));
       if (row.status === 'completed') {
-        return rpcOk(id, toolText({ ...auditPayload(row), cached: started.cached, note: started.note ?? null }));
+        return rpcOk(
+          id,
+          toolText({ ...auditPayload(row, refInfo.ref, refInfo.basis), cached: started.cached, note: started.note ?? null })
+        );
       }
       return rpcOk(
         id,
@@ -179,6 +206,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           id: row.id,
           shareId: row.shareId,
           stage: row.stage,
+          attribution: { ref: refInfo.ref, basis: refInfo.basis },
           hint: 'The crawl is still running. Call get_audit with this id in about 30 seconds — do not start another audit of the same site.',
         })
       );
@@ -190,7 +218,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       if (row.status !== 'completed') {
         return rpcOk(id, toolText({ status: row.status, id: row.id, stage: row.stage, progress: row.progress }));
       }
-      return rpcOk(id, toolText(auditPayload(row)));
+      return rpcOk(id, toolText(auditPayload(row, refInfo.ref, refInfo.basis)));
     }
 
     return rpcErr(id, -32602, `Unknown tool: ${name || '(none)'}`);
