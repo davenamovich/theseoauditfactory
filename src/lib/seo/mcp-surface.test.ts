@@ -2,7 +2,16 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildMusePack, MUSE_GATES } from './muse-prompts.ts';
-import { assertInviteCopy, buildInvite, BANNED_PHRASES, INVITE_COPY } from './invite.ts';
+import {
+  assertInviteCopy,
+  buildInvite,
+  inviteHref,
+  resolveRef,
+  BANNED_PHRASES,
+  INVITE_BASE,
+  INVITE_COPY,
+  INVITE_REF_OK,
+} from './invite.ts';
 import type { AuditReport, Finding } from './types.ts';
 
 const finding = (over: Partial<Finding>): Finding => ({
@@ -115,16 +124,52 @@ test('same report in, same pack out', () => {
   assert.deepEqual(buildMusePack(report()), buildMusePack(report()));
 });
 
-test('the invite hides itself when no destination is configured', () => {
-  const invite = buildInvite('');
-  assert.equal(invite.enabled, false);
-  assert.equal(invite.href, '', 'an empty href is the failure this guards against');
+test('with no ref the invite still works — attribution is the bonus, not the requirement', () => {
+  const invite = buildInvite();
+  assert.equal(invite.enabled, true);
+  assert.equal(invite.href, 'https://whop.plunderandriffle.com/');
+  assert.equal(invite.ref, null);
+  assert.equal(invite.refRejected, false);
 });
 
-test('a configured destination is passed through unchanged', () => {
-  const invite = buildInvite('https://whop.com/example/join');
-  assert.equal(invite.enabled, true);
-  assert.equal(invite.href, 'https://whop.com/example/join');
+test('a sharer\'s ref rides on the link, which is the whole point', () => {
+  const invite = buildInvite('745596535');
+  assert.equal(invite.href, 'https://whop.plunderandriffle.com/?ref=745596535');
+  assert.equal(invite.ref, '745596535');
+  assert.equal(invite.refRejected, false);
+});
+
+test('a bad ref is dropped, never pasted through, and the drop is visible', () => {
+  for (const bad of ['a b', '../../etc', 'ref=1&x=2', 'x'.repeat(65), '']) {
+    const invite = buildInvite(bad);
+    assert.equal(invite.enabled, true, `still a working link for ${JSON.stringify(bad)}`);
+    assert.equal(invite.href, 'https://whop.plunderandriffle.com/');
+    assert.equal(invite.ref, null);
+  }
+  const rejected = buildInvite('a b');
+  assert.equal(rejected.refRejected, true, 'callers must be able to see the code was not used');
+  assert.equal(buildInvite('').refRejected, false, 'no code at all is not a rejection');
+});
+
+test('the base and the code pattern match the engine, where Dave settled them', () => {
+  // bot/src/lib/gift-cta.ts: GIFT_SITE and REF_OK. Copied, not re-derived.
+  assert.equal(INVITE_BASE, 'https://whop.plunderandriffle.com');
+  assert.equal(INVITE_REF_OK.source, /^[A-Za-z0-9._-]{1,64}$/.source);
+  assert.equal(INVITE_REF_OK.test('49YNE2'), true);
+  assert.equal(INVITE_REF_OK.test('a.b_c-d'), true);
+});
+
+test('ref precedence: what the caller said beats what the URL said, and the basis is named', () => {
+  assert.deepEqual(resolveRef({ argument: '745596535', url: '999' }), { ref: '745596535', basis: 'argument' });
+  assert.deepEqual(resolveRef({ argument: 'bad code', url: '999' }), { ref: '999', basis: 'url' });
+  assert.deepEqual(resolveRef({}), { ref: null, basis: 'none' });
+  assert.deepEqual(resolveRef({ argument: '  ', url: null }), { ref: null, basis: 'none' });
+});
+
+test('every P&R link variant keeps the ref — none of them loses the sharer', () => {
+  assert.match(inviteHref('ABC'), /\?ref=ABC$/);
+  assert.equal(inviteHref('', 'https://whop.plunderandriffle.com'), 'https://whop.plunderandriffle.com/');
+  assert.match(inviteHref('ABC', 'https://whop.plunderandriffle.com/checkout?x=1'), /x=1&ref=ABC$/);
 });
 
 test('the shipped copy makes no promise we cannot keep', () => {
