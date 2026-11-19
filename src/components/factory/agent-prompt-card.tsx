@@ -28,7 +28,13 @@ export function AgentPromptCard({ report }: { report: AuditReport }) {
   const [copiedMuse, setCopiedMuse] = useState(false);
   const prompt = useMemo(() => buildAgentPrompt(report), [report]);
   const pack = useMemo(() => buildMusePack(report), [report]);
-  const invite = useMemo(() => buildInvite(), []);
+  // The sharer's code, if the report was opened through their link. Read from
+  // the URL rather than a prop so any page that shows this card gets it free.
+  const ref = useMemo(() => {
+    if (typeof window === 'undefined') return '';
+    return new URLSearchParams(window.location.search).get('ref') ?? '';
+  }, []);
+  const invite = useMemo(() => buildInvite(ref), [ref]);
 
   const copyMuse = async () => {
     const text = pack.prompts.map((p) => `${p.title}\n${p.when}\n\n${p.prompt}`).join('\n\n---\n\n');
@@ -163,6 +169,11 @@ export function AgentPromptCard({ report }: { report: AuditReport }) {
               <ArrowUpRight className="h-4 w-4" />
             </a>
             <p className="mt-3 text-[11px] text-muted-foreground leading-relaxed">{invite.terms}</p>
+            {invite.ref && (
+              <p className="mt-2 text-[11px] font-mono text-primary/80">
+                your link · ref {invite.ref} · anyone who signs up through this report is credited to you
+              </p>
+            )}
           </div>
         )}
       </div>
